@@ -227,7 +227,8 @@ async function start(){
 
   if(error || !prof){
     document.getElementById("loginErr").textContent =
-      "Akun belum punya profil. Jalankan insert into profiles di SQL Editor.";
+      "Profil tidak terbaca — " + (error ? (error.code||"") + " " + error.message : "tidak ada baris untuk user id " + user.id);
+    console.log("user id:", user.id, "profile error:", error);
     return;
   }
 
@@ -469,4 +470,3 @@ sb.auth.getSession().then(({data:{session}}) => { if(session) start(); });
 </script>
 </body>
 </html>
-
