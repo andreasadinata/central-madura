@@ -72,15 +72,33 @@ function authGate(onReady, allowedRoles) {
     const email = $("email").value.trim();
     if (!email) { $("loginErr").textContent = "Isi email dulu, lalu klik Lupa password."; return; }
     const { error } = await sb.auth.resetPasswordForEmail(email, { redirectTo: location.origin + location.pathname });
-    $("loginErr").textContent = error ? "Gagal kirim email: " + error.message
-      : "Link ganti password dikirim ke " + email + ". Buka email itu di perangkat ini (cek juga folder Junk/Spam).";
+    if (error && /rate limit/i.test(error.message)) {
+      $("loginErr").textContent = "Email sudah dikirim baru-baru ini. Pakai kode dari email itu, atau tunggu ±1 jam sebelum minta lagi.";
+    } else if (error) { $("loginErr").textContent = "Gagal kirim email: " + error.message; return; }
+    else $("loginErr").textContent = "Email dikirim ke " + email + " (cek juga Junk).";
+    showCodeEntry(email);
   };
-
   let recovering = false;
   sb.auth.onAuthStateChange(event => { if (event === "PASSWORD_RECOVERY") { recovering = true; showSetPassword(boot); } });
   sb.auth.getSession().then(({ data: { session } }) => {
     if (session && !recovering && !location.hash.includes("type=recovery")) boot();
   });
+}
+
+// Enter the 6-digit code from the email. A code works even when Outlook/Hotmail has already
+// "clicked" the link in the email to scan it (which uses up the link).
+function showCodeEntry(email) {
+  if ($("codeBox")) return;
+  $("loginErr").insertAdjacentHTML("afterend", `<div id="codeBox" style="margin-top:12px">
+    <input id="otp" inputmode="numeric" maxlength="10" placeholder="Kode dari email (6 digit)" autocomplete="one-time-code">
+    <button class="primary" id="otpBtn">Pakai kode</button></div>`);
+  $("otpBtn").onclick = async () => {
+    const token = $("otp").value.replace(/\s/g, "");
+    if (!/^\d{6,10}$/.test(token)) { $("loginErr").textContent = "Kode harus angka dari email."; return; }
+    const { error } = await sb.auth.verifyOtp({ email, token, type: "recovery" });
+    if (error) { $("loginErr").textContent = "Kode ditolak: " + error.message; return; }
+    showSetPassword(() => location.reload());
+  };
 }
 
 function showSetPassword(then) {
