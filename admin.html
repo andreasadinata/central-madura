@@ -112,6 +112,12 @@
         <div class="field"><label>Grup jasa (untuk laporan, mis. "Balancing")</label><input id="pmGroup"></div>
       </div>
       <div class="grid2">
+        <div class="field"><label>Dihitung untuk bonus</label><select id="pmBonus" onchange="$('pmPointsBox').classList.toggle('hide',this.value!=='ban')">
+          <option value="">Tidak</option><option value="spooring">Target Spooring (qty)</option><option value="balancing">Target Balancing (qty)</option>
+          <option value="nitrogen">Target Nitrogen (qty)</option><option value="ban">Ban terjual (poin)</option><option value="jasa_ll">Jasa lain (% omzet, dulu [LL])</option></select></div>
+        <div class="field" id="pmPointsBox"><label>Poin bonus per pcs</label><input id="pmPoints" inputmode="decimal"></div>
+      </div>
+      <div class="grid2">
         <div class="field"><label>Isi per dus (info saja)</label><input id="pmDus" inputmode="numeric"></div>
         <div class="field"><label>Status</label><select id="pmActive"><option value="1">Aktif</option><option value="0">Nonaktif</option></select></div>
       </div>
@@ -242,6 +248,8 @@ function editProduct(id) {
   $("pmName").value = p.name || ""; $("pmBrand").value = p.brand || ""; $("pmBarcode").value = p.barcode || "";
   $("pmService").value = p.is_service ? "1" : "0"; $("pmGroup").value = p.service_group || "";
   $("pmDus").value = p.isi_per_dus || ""; $("pmActive").value = p.is_active ? "1" : "0";
+  $("pmBonus").value = p.bonus_type || ""; $("pmPoints").value = p.bonus_points ?? "";
+  $("pmPointsBox").classList.toggle("hide", $("pmBonus").value !== "ban");
   $("pmSku").disabled = !!id;   // SKU never changes once used
   draftTiers = {};
   lists.forEach(l => draftTiers[l.id] = (tiers[id] || []).filter(t => t.price_list_id === l.id)
@@ -282,7 +290,9 @@ async function saveProduct() {
     category_id: Number($("pmCat").value), name: $("pmName").value.trim(),
     brand: $("pmBrand").value.trim() || null, barcode: $("pmBarcode").value.trim() || null,
     is_service: $("pmService").value === "1", service_group: $("pmGroup").value.trim() || null,
-    isi_per_dus: parseInt($("pmDus").value) || null, is_active: $("pmActive").value === "1"
+    isi_per_dus: parseInt($("pmDus").value) || null, is_active: $("pmActive").value === "1",
+    bonus_type: $("pmBonus").value || null,
+    bonus_points: $("pmBonus").value === "ban" && $("pmPoints").value !== "" ? Number($("pmPoints").value.replace(",", ".")) : null
   };
   if (!row.name) { err.textContent = "Nama wajib diisi."; return; }
   for (const l of lists) {

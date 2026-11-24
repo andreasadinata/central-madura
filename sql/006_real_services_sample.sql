@@ -18,3 +18,13 @@ with s(sku, name, cat, grp, price) as (values
 )
 insert into price_tiers (price_list_id, product_id, min_qty, price)
 select (select id from price_lists where is_default), ins.id, 1, s.price from ins join s on s.sku = ins.sku;
+
+-- Bonus categories (replaces the [LL] name suffix with a real field)
+alter table products
+  add column bonus_type text check (bonus_type in ('spooring','balancing','nitrogen','ban','jasa_ll')),
+  add column bonus_points numeric;
+update products set bonus_type = 'spooring'  where service_group = 'Spooring';
+update products set bonus_type = 'balancing' where service_group = 'Balancing';
+update products set bonus_type = 'nitrogen'  where service_group = 'Nitrogen';
+update products set bonus_type = 'jasa_ll'   where name like '%[LL]%';
+update products p set bonus_type = 'ban' from categories c where c.id = p.category_id and c.code = 'BAN' and not p.is_service;
