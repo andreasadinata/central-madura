@@ -145,9 +145,9 @@
               <button class="link small" id="custChangeBtn" onclick="startCustSearch()">Ganti</button>
             </div>
           </div>
-          <div id="custSearchBox" class="hide" style="position:relative;margin-top:10px">
+          <div id="custSearchBox" style="position:relative;margin-top:10px">
             <div class="row">
-              <input id="custQ" placeholder="Nama / plat / no HP…" autocomplete="off">
+              <input id="custQ" placeholder="Cari pelanggan: nama / plat / no HP…" autocomplete="off">
               <button onclick="openCustModal('new')">+ Baru</button>
             </div>
             <div class="results hide" id="custResults"></div>
@@ -189,15 +189,17 @@
       <div id="cmCustFields">
         <div class="field"><label>Nama *</label><input id="cmName"></div>
         <div class="grid2">
-          <div class="field"><label>No HP</label><input id="cmPhone" inputmode="tel"></div>
-          <div class="field"><label>Alamat</label><input id="cmAddr"></div>
+          <div class="field"><label>No HP *</label><input id="cmPhone" inputmode="tel"></div>
+          <div class="field"><label>Alamat *</label><input id="cmAddr"></div>
         </div>
       </div>
+      <div id="cmVehFields">
       <div class="grid2">
-        <div class="field"><label>Plat nomor</label><input id="cmPlate" style="text-transform:uppercase"></div>
-        <div class="field"><label>Warna</label><input id="cmColor"></div>
+        <div class="field"><label>Plat nomor *</label><input id="cmPlate" style="text-transform:uppercase"></div>
+        <div class="field"><label>Warna *</label><input id="cmColor" placeholder="mis. Hitam"></div>
       </div>
       <div class="field"><label>Mobil (merk + tipe)</label><input id="cmModel" list="modelList" placeholder="mis. Toyota Avanza"></div>
+      </div>
       <datalist id="modelList"></datalist>
       <div class="err" id="cmErr"></div>
     </div>
@@ -220,7 +222,8 @@ let cust = null, vehicles = [], vehicleId = null, freePlate = "";
 let sale = null;            // loaded saved invoice (null = new invoice)
 let cart = [];              // lines not yet saved: {pid, qty, price, reason, manual}
 let editing = -1;           // index of cart line being edited
-let method = "tunai", printFmt = "invoice";
+let method = "bayar", printFmt = "invoice";   // method: "bayar" (pay now) | "tempo"
+let banks = [];
 let busy = false;
 
 const todayJkt = () => new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Jakarta" });
@@ -236,22 +239,23 @@ async function start() {
   try {
     await loadMaster();
   } catch (e) { toast("Gagal memuat data: " + esc(errText(e)), "err"); return; }
-  await setCustomer(await umumCustomer());
+  await setCustomer(null);
   renderChips(); renderGrid(); renderAll(); refreshPending();
   $("q").focus();
 }
 
 async function loadMaster() {
-  const [c, p, t, s, pl, cm] = await Promise.all([
+  const [c, p, t, s, pl, cm, bk] = await Promise.all([
     sb.from("categories").select("*").order("sort"),
     fetchAll(() => sb.from("products").select("id,sku,barcode,name,brand,is_service,service_group,category_id,isi_per_dus").eq("is_active", true).order("name")),
     fetchAll(() => sb.from("price_tiers").select("product_id,price_list_id,min_qty,price").order("id")),
     fetchAll(() => sb.from("product_stock").select("product_id,qty").eq("location_id", ME.location_id).order("product_id")),
     sb.from("price_lists").select("*"),
-    fetchAll(() => sb.from("car_models").select("*").order("brand"))
+    fetchAll(() => sb.from("car_models").select("*").order("brand")),
+    sb.from("bank_accounts").select("*").eq("is_active", true).order("id")
   ]);
   if (c.error) throw c.error; if (pl.error) throw pl.error;
-  cats = c.data; products = p; carModels = cm;
+  cats = c.data; products = p; carModels = cm; banks = bk.data || [];
   byId = {}; products.forEach(x => byId[x.id] = x);
   tiers = {}; t.forEach(r => (tiers[r.product_id] ||= []).push(r));
   stock = {}; s.forEach(r => stock[r.product_id] = Number(r.qty));
@@ -259,10 +263,6 @@ async function loadMaster() {
   $("modelList").innerHTML = carModels.map(m => `<option value="${esc(m.brand + " " + m.model)}">`).join("");
 }
 
-async function umumCustomer() {
-  const { data } = await sb.from("customers").select("*").eq("name", "UMUM").order("id").limit(1);
-  return data && data[0];
-}
 
 // ═══════════════════════ PRODUCTS ═══════════════════════
 const catName = id => (cats.find(c => c.id === id) || {}).name || "";
@@ -345,16 +345,23 @@ const cartTotal = () => cart.reduce((s, l) => s + l.qty * l.price, 0);
 const missingReason = () => cart.some(l => l.price < (stdPrice(l.pid, l.qty)?.price ?? 0) && !l.reason.trim());
 
 // ═══════════════════════ CUSTOMER ═══════════════════════
+// Every invoice needs a customer with HP + alamat and a vehicle with plat + warna.
+// Walk-in who won't give details: staff type anything ("-", "xxx") — but they must type something.
+const custMissing = c => c ? [!String(c.phone || "").trim() && "no HP", !String(c.address || "").trim() && "alamat"].filter(Boolean) : [];
+
 async function setCustomer(c, pickVehicleId) {
-  cust = c; vehicleId = null; freePlate = "";
-  const { data } = await sb.from("vehicles").select("*, car_models(brand,model)")
-    .eq("customer_id", c.id).eq("is_active", true).order("created_at", { ascending: false });
-  vehicles = data || [];
-  if (pickVehicleId) vehicleId = pickVehicleId;
-  else if (vehicles.length === 1) vehicleId = vehicles[0].id;
+  cust = c; vehicleId = null; vehicles = [];
+  if (c) {
+    const { data } = await sb.from("vehicles").select("*, car_models(brand,model)")
+      .eq("customer_id", c.id).eq("is_active", true).order("created_at", { ascending: false });
+    vehicles = data || [];
+    if (pickVehicleId) vehicleId = pickVehicleId;
+    else if (vehicles.length === 1) vehicleId = vehicles[0].id;
+  }
   cart.forEach((l, i) => reprice(i));
-  $("custSearchBox").classList.add("hide");
+  $("custSearchBox").classList.toggle("hide", !!c);
   renderCust(); renderGrid(); renderAll();
+  if (!c && !sale) setTimeout(() => $("custQ").focus(), 50);
 }
 
 function vehLabel(v) {
@@ -363,22 +370,42 @@ function vehLabel(v) {
 }
 
 function renderCust() {
-  const isUmum = cust.name === "UMUM";
+  if (!cust) {
+    $("custName").textContent = "Pilih pelanggan";
+    $("custMeta").innerHTML = '<span style="color:var(--red)">wajib sebelum simpan</span>';
+    $("plateChip").classList.add("hide");
+    $("custChangeBtn").classList.add("hide");
+    $("vehBox").innerHTML = "";
+    return;
+  }
   $("custName").textContent = cust.name;
   const meta = [cust.phone, cust.price_list_id ? "Harga: " + priceListNames[cust.price_list_id] : null].filter(Boolean);
-  $("custMeta").innerHTML = esc(meta.join(" · ")) + (cust.allow_tempo ? ' <span class="badge b-tempo">TEMPO</span>' : "");
+  const miss = custMissing(cust);
+  $("custMeta").innerHTML = esc(meta.join(" · ")) + (cust.allow_tempo ? ' <span class="badge b-tempo">TEMPO</span>' : "")
+    + (miss.length && !sale ? ` <button class="link small danger" onclick="openCustModal('edit')">Lengkapi ${miss.join(", ")}</button>` : "");
   const v = vehicles.find(x => x.id === vehicleId);
-  const plateTxt = v ? v.plate : (sale ? sale.plate : freePlate) || "";
+  const plateTxt = v ? v.plate : (sale ? sale.plate : "") || "";
   $("plateChip").textContent = plateTxt;
   $("plateChip").classList.toggle("hide", !plateTxt);
   $("custChangeBtn").classList.toggle("hide", !!sale);
   if (sale) { $("vehBox").innerHTML = ""; return; }
-  let h = vehicles.map(x => `<button class="${x.id === vehicleId ? "on" : ""}" onclick="pickVehicle(${x.id})">${esc(vehLabel(x))}</button>`).join("");
-  if (isUmum) h += `<input id="freePlate" placeholder="Plat (opsional)" style="width:150px;padding:6px 10px;font-size:12px;text-transform:uppercase" value="${esc(freePlate)}" oninput="freePlate=this.value.toUpperCase();$('plateChip').textContent=freePlate;$('plateChip').classList.toggle('hide',!freePlate)">`;
-  else h += `<button onclick="openCustModal('vehicle')">+ Kendaraan</button>`;
+  let h = vehicles.map(x => `<button class="${x.id === vehicleId ? "on" : ""}" onclick="pickVehicle(${x.id})">${esc(vehLabel(x))}${x.color ? "" : ' <span style="color:var(--red)">· warna?</span>'}</button>`).join("");
+  h += `<button onclick="openCustModal('vehicle')">+ Kendaraan</button>`;
+  if (!vehicles.length) h += `<span class="small" style="color:var(--red);align-self:center">Tambah kendaraan dulu</span>`;
   $("vehBox").innerHTML = h;
 }
-function pickVehicle(id) { vehicleId = vehicleId === id ? null : id; renderCust(); }
+
+async function pickVehicle(id) {
+  const v = vehicles.find(x => x.id === id);
+  if (v && !String(v.color || "").trim()) {
+    const color = prompt(`Warna mobil ${v.plate}? (wajib, untuk CCTV & komplain)`);
+    if (!color || !color.trim()) { toast("Warna wajib diisi sebelum kendaraan bisa dipakai.", "err"); return; }
+    const { error } = await sb.from("vehicles").update({ color: color.trim() }).eq("id", id);
+    if (error) { toast("Gagal simpan warna: " + esc(error.message), "err"); return; }
+    v.color = color.trim();
+  }
+  vehicleId = vehicleId === id ? null : id; renderCust(); renderFoot();
+}
 
 function startCustSearch() {
   $("custSearchBox").classList.remove("hide");
@@ -388,7 +415,7 @@ function startCustSearch() {
 
 let custTimer;
 $("custQ").addEventListener("input", () => { clearTimeout(custTimer); custTimer = setTimeout(searchCust, 250); });
-$("custQ").addEventListener("keydown", e => { if (e.key === "Escape") $("custSearchBox").classList.add("hide"); });
+$("custQ").addEventListener("keydown", e => { if (e.key === "Escape" && cust) $("custSearchBox").classList.add("hide"); });
 
 async function searchCust() {
   const raw = $("custQ").value.trim();
@@ -405,7 +432,7 @@ async function searchCust() {
   ]);
   if (cs.error || vs.error) { toast("Cari pelanggan gagal: " + esc(errText(cs.error || vs.error)), "err"); return; }
   const rows = [];
-  (vs.data || []).forEach(v => rows.push({ c: v.customers, vid: v.id, label: `<b>${esc(v.customers.name)}</b> – ${esc(v.plate)} <span class="muted small">${esc(v.car_models ? v.car_models.brand + " " + v.car_models.model : "")}</span>` }));
+  (vs.data || []).forEach(v => rows.push({ c: v.customers, vid: v.id, label: `<b>${esc(v.customers.name)}</b> – ${esc(v.plate)} <span class="muted small">${esc(v.car_models ? v.car_models.brand + " " + v.car_models.model : "")} ${esc(v.color || "")}</span>` }));
   (cs.data || []).forEach(c => { if (!rows.some(r => r.c.id === c.id)) rows.push({ c, vid: null, label: `<b>${esc(c.name)}</b> <span class="muted small">${esc(c.phone || "")}</span>` }); });
   window._custRows = rows;
   box.innerHTML = rows.length ? rows.map((r, i) => `<div onclick="chooseCust(${i})">${r.label}</div>`).join("")
@@ -414,20 +441,22 @@ async function searchCust() {
 }
 function chooseCust(i) { const r = window._custRows[i]; setCustomer(r.c, r.vid); }
 
-// new customer or new vehicle
+// mode: "new" customer + vehicle · "vehicle" new vehicle for current customer · "edit" complete current customer
 let cmMode = "new";
 function openCustModal(mode) {
   cmMode = mode;
-  $("cmTitle").textContent = mode === "new" ? "Pelanggan baru" : "Kendaraan baru untuk " + cust.name;
-  $("cmCustFields").classList.toggle("hide", mode !== "new");
+  $("cmTitle").textContent = { new: "Pelanggan baru", vehicle: "Kendaraan baru untuk " + cust?.name, edit: "Lengkapi data " + cust?.name }[mode];
+  $("cmCustFields").classList.toggle("hide", mode === "vehicle");
+  $("cmVehFields").classList.toggle("hide", mode === "edit");
   ["cmName","cmPhone","cmAddr","cmPlate","cmColor","cmModel"].forEach(id => $(id).value = "");
   if (mode === "new") {
     const raw = $("custQ").value.trim();
-    if (/^\d{6,}$/.test(raw.replace(/\D/g, "")) && /^[\d\s+-]+$/.test(raw)) $("cmPhone").value = raw; else $("cmName").value = raw;
+    if (/^[\d\s+-]{6,}$/.test(raw)) $("cmPhone").value = raw; else if (/^[A-Za-z]{1,2}\s*\d/.test(raw)) $("cmPlate").value = raw.toUpperCase(); else $("cmName").value = raw;
   }
+  if (mode === "edit") { $("cmName").value = cust.name; $("cmPhone").value = cust.phone || ""; $("cmAddr").value = cust.address || ""; }
   $("cmErr").textContent = "";
   $("custModal").classList.add("open");
-  setTimeout(() => $(mode === "new" ? "cmName" : "cmPlate").focus(), 50);
+  setTimeout(() => $(mode === "vehicle" ? "cmPlate" : mode === "edit" ? (cust.phone ? "cmAddr" : "cmPhone") : "cmName").focus(), 50);
 }
 
 async function resolveModel(text) {
@@ -447,25 +476,33 @@ async function resolveModel(text) {
 
 async function saveCustModal() {
   const err = $("cmErr"); err.textContent = "";
-  const plate = $("cmPlate").value.trim().toUpperCase().replace(/\s+/g, " ");
+  const name = $("cmName").value.trim(), phone = $("cmPhone").value.trim(), addr = $("cmAddr").value.trim();
+  const plate = $("cmPlate").value.trim().toUpperCase().replace(/\s+/g, " "), color = $("cmColor").value.trim();
+  const need = [];
+  if (cmMode !== "vehicle") { if (!name) need.push("nama"); if (!phone) need.push("no HP"); if (!addr) need.push("alamat"); }
+  if (cmMode !== "edit") { if (!plate) need.push("plat"); if (!color) need.push("warna"); }
+  if (need.length) { err.textContent = "Wajib diisi: " + need.join(", ") + ". Pelanggan yang tidak mau memberi data: isi \"-\"."; return; }
   try {
     $("cmSave").disabled = true;
     let c = cust;
     if (cmMode === "new") {
-      const name = $("cmName").value.trim(), phone = $("cmPhone").value.replace(/[^\d+]/g, "");
-      if (!name) { err.textContent = "Nama wajib diisi."; return; }
-      if (phone) {
+      const digits = phone.replace(/\D/g, "");
+      if (digits.length >= 6) {
         const { data: dup } = await sb.from("customers").select("id,name").eq("phone", phone).limit(1);
         if (dup && dup.length && !confirm(`No HP ${phone} sudah terdaftar atas nama "${dup[0].name}". Tetap buat pelanggan baru?`)) return;
       }
-      const ins = await sb.from("customers").insert({ name: name.toUpperCase(), phone: phone || null, address: $("cmAddr").value.trim() || null, created_by: ME.id }).select().single();
+      const ins = await sb.from("customers").insert({ name: name.toUpperCase(), phone, address: addr, created_by: ME.id }).select().single();
       if (ins.error) throw ins.error;
       c = ins.data;
-    } else if (!plate) { err.textContent = "Plat wajib diisi."; return; }
-    let vid = null;
-    if (plate) {
+    } else if (cmMode === "edit") {
+      const up = await sb.from("customers").update({ name: name.toUpperCase(), phone, address: addr }).eq("id", cust.id).select().single();
+      if (up.error) throw up.error;
+      c = up.data;
+    }
+    let vid = vehicleId;
+    if (cmMode !== "edit") {
       const modelId = await resolveModel($("cmModel").value);
-      const v = await sb.from("vehicles").insert({ customer_id: c.id, plate, car_model_id: modelId, color: $("cmColor").value.trim() || null }).select().single();
+      const v = await sb.from("vehicles").insert({ customer_id: c.id, plate, car_model_id: modelId, color }).select().single();
       if (v.error) throw v.error;
       vid = v.data.id;
     }
@@ -482,7 +519,7 @@ const activeItems = () => (sale?.sale_items || []).filter(i => !i.cancelled_at);
 
 async function loadSale(id) {
   const { data, error } = await sb.from("sales")
-    .select("*, customers(*), vehicles(*, car_models(brand,model)), cashier:profiles!sales_cashier_id_fkey(full_name), sale_items(*, products(name,sku,is_service)), payments(*)")
+    .select("*, customers(*), vehicles(*, car_models(brand,model)), cashier:profiles!sales_cashier_id_fkey(full_name), sale_items(*, products(name,sku,is_service)), payments(*, bank_accounts(name))")
     .eq("id", id).single();
   if (error) throw error;
   data.sale_items.sort((a, b) => a.id - b.id);
@@ -493,15 +530,15 @@ async function loadSale(id) {
 async function openSale(id) {
   try { sale = await loadSale(id); } catch (e) { toast("Gagal membuka invoice: " + esc(errText(e)), "err"); return; }
   cart = []; editing = -1;
-  method = "tunai";
+  method = "bayar"; payLines = []; payDue = null;
   closeModal("txModal");
   await setCustomer(sale.customers, sale.vehicle_id);
 }
 
 function newInvoice() {
-  sale = null; cart = []; editing = -1; method = "tunai";
-  umumCustomer().then(c => setCustomer(c));
-  $("q").value = ""; renderGrid(); $("q").focus();
+  sale = null; cart = []; editing = -1; method = "bayar"; payLines = []; payDue = null;
+  setCustomer(null);
+  $("q").value = ""; renderGrid();
 }
 
 // ═══════════════════════ RENDER ═══════════════════════
@@ -559,20 +596,20 @@ function renderLines() {
 function renderFoot() {
   let h = "";
   const tempoOK = cust?.allow_tempo;
-  if (!tempoOK && method === "tempo") method = "tunai";
-  const segPay = (opts) => `<div class="seg">${opts.map(([k, lbl, dis]) =>
-      `<button class="${method === k ? "on" : ""}" ${dis ? "disabled title='Pelanggan ini tidak diizinkan tempo'" : ""} onclick="method='${k}';renderFoot()">${lbl}</button>`).join("")}</div>`;
+  if (!tempoOK && method === "tempo") method = "bayar";
   const segPrint = `<div class="seg2"><button class="${printFmt === "invoice" ? "on" : ""}" onclick="printFmt='invoice';renderFoot()">Invoice besar</button><button class="${printFmt === "small" ? "on" : ""}" onclick="printFmt='small';renderFoot()">Nota kecil</button></div>`;
 
   if (!sale) {
     const tot = cartTotal();
     h += `<div class="total"><span>Total</span><b>${rp(tot)}</b></div>`;
-    h += segPay([["tunai","Tunai"],["transfer","Transfer"],["tempo","Tempo",!tempoOK]]);
-    if (method !== "tempo") h += payInputs(tot);
+    if (tempoOK) h += `<div class="seg2"><button class="${method === "bayar" ? "on" : ""}" onclick="method='bayar';renderFoot()">Bayar sekarang</button><button class="${method === "tempo" ? "on" : ""}" onclick="method='tempo';renderFoot()">Tempo</button></div>`;
+    if (method !== "tempo" && tot > 0) h += payBlock(tot);
     h += segPrint;
-    const bad = !cart.length || missingReason();
+    const why = !cust ? "Pilih pelanggan dulu." : !vehicleId ? "Pilih / tambah kendaraan dulu." : custMissing(cust).length ? "Lengkapi data pelanggan: " + custMissing(cust).join(", ") + "." : "";
+    const bad = !cart.length || missingReason() || !!why;
     h += `<div class="acts"><button ${bad ? "disabled" : ""} onclick="saveNew(false)" title="Simpan tanpa bayar — muncul di Transaksi tertunda">Simpan</button>
       <button class="go" ${bad ? "disabled" : ""} onclick="saveNew(true)">${method === "tempo" ? "Simpan tempo & cetak" : "Bayar & cetak"}</button></div>`;
+    if (why && cart.length) h += `<div class="notice warn" style="margin:10px 0 0">${esc(why)}</div>`;
     if (missingReason()) h += `<div class="notice warn" style="margin:10px 0 0">Ada harga di bawah normal tanpa alasan. Klik barisnya untuk mengisi alasan.</div>`;
   } else {
     const tot = Number(sale.total), paid = Number(sale.paid_amount), add = cartTotal();
@@ -583,7 +620,7 @@ function renderFoot() {
     if (sale.status === "void") h += `<div class="notice red">VOID — ${esc(sale.void_reason)}. Tidak bisa diubah.</div>`;
     else if (!canEdit()) h += `<div class="notice warn">Invoice tanggal ${sale.business_date}: isi tidak bisa diubah lagi. Untuk barang/jasa yang lupa, buat invoice baru (nota susulan). Pembayaran tetap bisa.</div>`;
     h += `<div class="sum"><span>${badge} · ${fmtDT(sale.opened_at)} · ${esc(sale.cashier?.full_name || "")}</span></div>`;
-    sale.payments.forEach(p => h += `<div class="sum"><span>${p.amount < 0 ? "Dikembalikan" : "Dibayar"} ${fmtDT(p.created_at)} · ${p.method}</span><span>${num(p.amount)}</span></div>`);
+    sale.payments.forEach(p => h += `<div class="sum"><span>${payLabel(p)} · ${fmtDT(p.created_at)}</span><span>${num(p.amount)}</span></div>`);
     h += `<div class="total"><span>Total</span><b>${rp(tot)}</b></div>`;
     if (sale.status !== "void" && paid) h += `<div class="sum"><span>Sisa</span><span style="font-weight:700;color:${sisa > 0 ? "var(--red)" : "inherit"}">${num(Math.max(sisa, 0))}</span></div>`;
 
@@ -593,11 +630,10 @@ function renderFoot() {
     } else {
       if (over > 0) {
         h += `<div class="notice red">Lebih bayar ${rp(over)} — harus dikembalikan ke pelanggan.</div>`;
-        h += segPay([["tunai","Tunai"],["transfer","Transfer"]]);
-        h += `<div class="acts" style="margin-bottom:8px"><span></span><button class="primary" onclick="refund(${over})">Kembalikan ${rp(over)}</button></div>`;
+        h += `<div class="payrow"><div><label>Dikembalikan lewat</label><select id="refundM">${payOptions("tunai")}</select></div>
+              <div style="align-self:end"><button class="primary" style="width:100%" onclick="refund(${over})">Kembalikan ${rp(over)}</button></div></div>`;
       } else if (sisa > 0) {
-        h += segPay([["tunai","Tunai"],["transfer","Transfer"]]);
-        h += payInputs(sisa);
+        h += payBlock(sisa);
       }
       h += segPrint;
       h += `<div class="acts"><button onclick="newInvoice()">Invoice baru</button>`;
@@ -609,20 +645,42 @@ function renderFoot() {
     }
   }
   $("foot").innerHTML = h;
+  payRecalc();
 }
 
-function payInputs(due) {
-  return `<div class="payrow">
-    <div><label>Jumlah bayar (kurangi untuk DP)</label><input id="payAmt" inputmode="numeric" value="${num(due)}" oninput="this.value=num(parseRp(this.value));calcChange()"></div>
-    ${method === "tunai" ? `<div><label>Uang diterima → <b id="change">kembali 0</b></label><input id="cashIn" inputmode="numeric" placeholder="opsional" oninput="this.value=num(parseRp(this.value));calcChange()"></div>` : "<div></div>"}
-  </div>`;
+// ── Payment lines: several ways to pay one invoice (e.g. transfer 2.000.000 + tunai 475.000).
+//    Received more than due → the difference is given back in cash and recorded as "kembalian".
+let payLines = [], payDue = null;
+const payOptions = sel => `<option value="tunai" ${sel === "tunai" ? "selected" : ""}>Tunai</option>` +
+  banks.map(b => `<option value="tf:${b.id}" ${sel === "tf:" + b.id ? "selected" : ""}>Transfer ${esc(b.name)}</option>`).join("");
+function payLabel(p) {
+  if (p.is_change) return "Kembalian tunai";
+  const how = p.method === "transfer" ? "Transfer " + (p.bank_accounts?.name || "") : "Tunai";
+  return (p.amount < 0 ? "Dikembalikan · " : "Dibayar · ") + how;
 }
-function calcChange() {
-  const c = $("change"); if (!c) return;
-  const diff = parseRp($("cashIn").value) - parseRp($("payAmt").value);
-  c.textContent = $("cashIn").value ? (diff >= 0 ? "kembali " + num(diff) : "kurang " + num(-diff)) : "kembali 0";
-  c.style.color = diff < 0 ? "var(--red)" : "";
+function payBlock(due) {
+  if (payDue !== due || !payLines.length) { payLines = [{ m: "tunai", amt: due }]; payDue = due; }
+  return `<div style="margin-bottom:10px"><label>Pembayaran (kurangi untuk DP)</label>` +
+    payLines.map((l, i) => `<div class="row" style="margin-bottom:6px">
+      <select style="flex:1.2" onchange="payLines[${i}].m=this.value">${payOptions(l.m)}</select>
+      <input style="flex:1" class="num" inputmode="numeric" value="${num(l.amt)}" oninput="this.value=num(parseRp(this.value));payLines[${i}].amt=parseRp(this.value);payRecalc()">
+      ${payLines.length > 1 ? `<button class="link danger" onclick="payLines.splice(${i},1);renderFoot()">×</button>` : ""}</div>`).join("") +
+    `<div class="row" style="justify-content:space-between"><button class="link small" onclick="addPayLine()">+ cara bayar lain</button><span class="small" id="paySum"></span></div></div>`;
 }
+function addPayLine() {
+  const recv = payLines.reduce((a, l) => a + l.amt, 0);
+  payLines.push({ m: banks[0] ? "tf:" + banks[0].id : "tunai", amt: Math.max(payDue - recv, 0) });
+  renderFoot();
+}
+function payRecalc() {
+  const el = $("paySum"); if (!el) return;
+  const recv = payLines.reduce((a, l) => a + l.amt, 0), diff = recv - payDue;
+  el.innerHTML = diff >= 0
+    ? `Diterima ${num(recv)}${diff > 0 ? ` · <b>kembalian tunai ${num(diff)}</b>` : ""}`
+    : `Diterima ${num(recv)} · <b style="color:var(--red)">sisa ${num(-diff)}</b> (DP)`;
+}
+const payPayload = () => payLines.filter(l => l.amt > 0).map(l => l.m === "tunai"
+  ? { method: "tunai", amount: l.amt } : { method: "transfer", bank_account_id: Number(l.m.slice(3)), amount: l.amt });
 
 // ═══════════════════════ ACTIONS ═══════════════════════
 const itemsPayload = () => cart.map(l => ({ product_id: l.pid, qty: l.qty, unit_price: l.price, reason: l.reason.trim() }));
@@ -636,19 +694,21 @@ async function guard(fn) {
 }
 
 function saveNew(payAndPrint) {
+  if (!cust || !vehicleId) { toast("Pilih pelanggan dan kendaraan dulu.", "err"); return; }
   guard(async () => {
-    const amt = $("payAmt") ? parseRp($("payAmt").value) : 0;
-    const plate = vehicleId ? vehicles.find(v => v.id === vehicleId).plate : freePlate;
+    const pay = method === "tempo" ? [] : payPayload();
     const { data: s, error } = await sb.rpc("create_sale", {
-      p_customer: cust.id, p_vehicle: vehicleId, p_plate: plate || null,
+      p_customer: cust.id, p_vehicle: vehicleId, p_plate: null,
       p_items: itemsPayload(), p_tempo: method === "tempo"
     });
     if (error) throw error;
     let msg = `Tersimpan · <b>${s.invoice_no}</b> · ${rp(s.total)}`;
-    if (payAndPrint && method !== "tempo" && amt > 0) {
-      const p = await sb.rpc("pay_sale", { p_sale: s.id, p_method: method, p_amount: amt });
+    if (payAndPrint && pay.length) {
+      const p = await sb.rpc("pay_sale_multi", { p_sale: s.id, p_lines: pay });
       if (p.error) { toast(`Invoice ${s.invoice_no} tersimpan, tapi pembayaran GAGAL: ${esc(p.error.message)}. Buka di Transaksi tertunda.`, "err"); afterSave(); return; }
-      if (amt < s.total) msg += ` · DP ${rp(amt)}`;
+      const recv = pay.reduce((a, l) => a + l.amount, 0);
+      if (recv < s.total) msg += ` · DP ${rp(recv)}`;
+      if (recv > s.total) msg += ` · kembalian ${rp(recv - s.total)}`;
     }
     if (payAndPrint) await doPrint(s.id);
     toast(msg);
@@ -687,22 +747,25 @@ function cancelItem(itemId) {
 
 function payExisting() {
   guard(async () => {
-    const amt = parseRp($("payAmt").value);
-    const { error } = await sb.rpc("pay_sale", { p_sale: sale.id, p_method: method, p_amount: amt });
+    const pay = payPayload();
+    if (!pay.length) throw new Error("Isi jumlah pembayaran.");
+    const { error } = await sb.rpc("pay_sale_multi", { p_sale: sale.id, p_lines: pay });
     if (error) throw error;
     await doPrint(sale.id);
-    toast(`Pembayaran ${rp(amt)} tercatat · ${sale.invoice_no}`);
-    refreshPending();
+    toast(`Pembayaran ${rp(pay.reduce((a, l) => a + l.amount, 0))} tercatat · ${sale.invoice_no}`);
+    refreshPending(); payLines = []; payDue = null;
     sale = await loadSale(sale.id); renderAll();
   });
 }
 
 function refund(max) {
-  const reason = prompt(`Kembalikan ${rp(max)} (${method}) ke pelanggan.\nAlasan (wajib):`);
+  const m = $("refundM").value, how = m === "tunai" ? "tunai" : "transfer " + banks.find(b => "tf:" + b.id === m)?.name;
+  const reason = prompt(`Kembalikan ${rp(max)} (${how}) ke pelanggan.\nAlasan (wajib):`);
   if (reason === null) return;
   if (!reason.trim()) { toast("Alasan wajib diisi. Tidak ada uang dikembalikan.", "err"); return; }
   guard(async () => {
-    const { error } = await sb.rpc("refund_sale", { p_sale: sale.id, p_method: method, p_amount: max, p_reason: reason });
+    const { error } = await sb.rpc("refund_sale", { p_sale: sale.id, p_method: m === "tunai" ? "tunai" : "transfer",
+      p_amount: max, p_reason: reason, p_bank: m === "tunai" ? null : Number(m.slice(3)) });
     if (error) throw error;
     sale = await loadSale(sale.id);
     toast(`Pengembalian ${rp(max)} tercatat`);
@@ -791,7 +854,7 @@ function printInvoice(s) {
     <div class="p-hr"></div>
     <table><tr><td style="width:55%">${s.status === "void" ? "" : ""}<span class="p-stamp">${stampText(s)}</span></td><td>
       <table><tr><td>TOTAL</td><td class="p-r"><b>${num(s.total)}</b></td></tr>
-      ${s.payments.map(p => `<tr><td>${p.amount < 0 ? "Kembali" : "Bayar"} ${new Date(p.created_at).toLocaleDateString("id-ID",{timeZone:"Asia/Jakarta"})} ${p.method}</td><td class="p-r">${num(p.amount)}</td></tr>`).join("")}
+      ${s.payments.map(p => `<tr><td>${payLabel(p).replace("Dibayar · ", "")} ${new Date(p.created_at).toLocaleDateString("id-ID",{timeZone:"Asia/Jakarta"})}</td><td class="p-r">${num(p.amount)}</td></tr>`).join("")}
       ${s.status !== "void" && s.payments.length ? `<tr><td><b>SISA</b></td><td class="p-r"><b>${num(Math.max(sisa, 0))}</b></td></tr>` : ""}
       </table></td></tr></table>
     <br><br>
@@ -811,7 +874,7 @@ function printSmall(s) {
     <table>${items.map(it => `<tr><td colspan="2">${esc(it.products.name)}</td></tr><tr><td>&nbsp; ${num(it.qty)} x ${num(it.unit_price)}</td><td class="p-r">${num(it.line_total)}</td></tr>`).join("")}</table>
     <div class="p-hr"></div>
     <table><tr><td><b>TOTAL</b></td><td class="p-r"><b>${num(s.total)}</b></td></tr>
-    ${s.payments.map(p => `<tr><td>${p.amount < 0 ? "Kembali" : "Bayar"} ${p.method}</td><td class="p-r">${num(p.amount)}</td></tr>`).join("")}
+    ${s.payments.map(p => `<tr><td>${payLabel(p).replace("Dibayar · ", "")}</td><td class="p-r">${num(p.amount)}</td></tr>`).join("")}
     ${s.status !== "void" && s.payments.length ? `<tr><td>SISA</td><td class="p-r">${num(Math.max(sisa, 0))}</td></tr>` : ""}</table>
     <div style="text-align:center;margin-top:6px"><b>${stampText(s)}</b><br>Terima kasih</div>
   </div>`;

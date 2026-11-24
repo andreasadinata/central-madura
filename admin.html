@@ -44,6 +44,7 @@
     <button id="t-produk" onclick="tab('produk')">Produk & harga</button>
     <button id="t-pelanggan" onclick="tab('pelanggan')">Pelanggan</button>
     <button id="t-tinjauan" onclick="tab('tinjauan')">Tinjauan harian</button>
+    <button id="t-rekening" onclick="tab('rekening')">Rekening bank</button>
     <button id="t-pengguna" onclick="tab('pengguna')" class="hide">Pengguna</button>
   </div>
 
@@ -54,7 +55,7 @@
       <select id="pcat" style="max-width:200px" onchange="renderProducts()"></select>
       <label class="row small" style="margin:0"><input type="checkbox" id="pinactive" style="width:auto" onchange="renderProducts()"> tampilkan nonaktif</label>
       <span class="grow"></span>
-      <span class="small muted">Daftar harga:</span> <span id="plists"></span>
+      <span class="small muted" title="Daftar harga = satu set harga khusus untuk pelanggan tertentu. Isi harganya di tiap produk (klik produk). Lalu pasang daftar itu ke pelanggannya di tab Pelanggan.">Daftar harga ⓘ:</span> <span id="plists"></span>
       <button onclick="newPriceList()">+ Daftar harga</button>
       <button class="primary" onclick="editProduct(null)">+ Produk baru</button>
     </div>
@@ -82,6 +83,13 @@
     <div class="panel"><table>
       <thead><tr><th>Waktu</th><th>Jenis</th><th>Invoice</th><th>Oleh</th><th>Keterangan</th><th class="num">Nilai</th></tr></thead>
       <tbody id="rtable"></tbody></table></div>
+  </div>
+
+  <!-- REKENING -->
+  <div class="page hide" id="p-rekening">
+    <div class="bar"><span class="small muted">Rekening yang muncul di kasir saat pelanggan bayar transfer. Nonaktifkan yang tidak dipakai (tidak dihapus, karena dipakai di pembayaran lama).</span>
+      <span class="grow"></span><button class="primary" onclick="newBank()">+ Rekening</button></div>
+    <div class="panel"><table><thead><tr><th>Nama (mis. "BCA 123-456 a/n Andreas")</th><th>Status</th></tr></thead><tbody id="btable"></tbody></table></div>
   </div>
 
   <!-- PENGGUNA -->
@@ -124,7 +132,7 @@
       <div id="pmTiers"></div>
       <div class="err" id="pmErr"></div>
     </div>
-    <footer><button onclick="closeModal('prodModal')">Batal</button><button class="primary" id="pmSave" onclick="saveProduct()">Simpan</button></footer>
+    <footer><button class="danger" id="pmDelete" style="margin-right:auto" onclick="deleteProduct()">Hapus produk</button><button onclick="closeModal('prodModal')">Batal</button><button class="primary" id="pmSave" onclick="saveProduct()">Simpan</button></footer>
   </div>
 </div>
 
@@ -133,10 +141,10 @@
   <div class="modal">
     <header><h3>Pelanggan</h3><button onclick="closeModal('custModal')">Tutup</button></header>
     <div class="body">
-      <div class="field"><label>Nama</label><input id="cmName"></div>
+      <div class="field"><label>Nama *</label><input id="cmName"></div>
       <div class="grid2">
-        <div class="field"><label>HP</label><input id="cmPhone"></div>
-        <div class="field"><label>Alamat</label><input id="cmAddr"></div>
+        <div class="field"><label>HP *</label><input id="cmPhone"></div>
+        <div class="field"><label>Alamat *</label><input id="cmAddr"></div>
       </div>
       <div class="grid2">
         <div class="field"><label>Daftar harga</label><select id="cmList"></select></div>
@@ -194,13 +202,15 @@ async function start() {
 }
 
 function tab(name) {
-  ["produk", "pelanggan", "tinjauan", "pengguna"].forEach(n => {
+  ["produk", "pelanggan", "tinjauan", "rekening", "pengguna"].forEach(n => {
     $("p-" + n).classList.toggle("hide", n !== name);
     $("t-" + n).classList.toggle("on", n === name);
   });
   history.replaceState(null, "", "#" + name);
   if (name === "tinjauan") loadReview();
   if (name === "pengguna") loadUsers();
+  if (name === "rekening") loadBanks();
+  if (name === "pelanggan" && !custRows.length) searchCustomers(true);
 }
 
 async function loadAll() {
@@ -251,6 +261,7 @@ function editProduct(id) {
   $("pmBonus").value = p.bonus_type || ""; $("pmPoints").value = p.bonus_points ?? "";
   $("pmPointsBox").classList.toggle("hide", $("pmBonus").value !== "ban");
   $("pmSku").disabled = !!id;   // SKU never changes once used
+  $("pmDelete").classList.toggle("hide", !id);
   draftTiers = {};
   lists.forEach(l => draftTiers[l.id] = (tiers[id] || []).filter(t => t.price_list_id === l.id)
     .sort((a, b) => a.min_qty - b.min_qty).map(t => ({ id: t.id, min_qty: Number(t.min_qty), price: Number(t.price) })));
@@ -342,12 +353,39 @@ async function saveProduct() {
   finally { $("pmSave").disabled = false; }
 }
 
+async function deleteProduct() {
+  if (!confirm(`Hapus "${editingProduct.name}" selamanya?\nHanya bisa kalau produk ini belum pernah dipakai di transaksi atau stok.`)) return;
+  const { error } = await sb.rpc("delete_product", { p_product: editingProduct.id });
+  if (error) { $("pmErr").textContent = error.message; return; }
+  closeModal("prodModal"); toast("Produk dihapus."); await loadAll();
+}
+
+async function loadBanks() {
+  const { data, error } = await sb.from("bank_accounts").select("*").order("id");
+  if (error) { $("btable").innerHTML = `<tr><td colspan="2" class="err">${esc(error.message)}</td></tr>`; return; }
+  $("btable").innerHTML = data.map(b => `<tr class="${b.is_active ? "" : "off"}">
+    <td><input value="${esc(b.name)}" onchange="updBank(${b.id},{name:this.value.trim()})"></td>
+    <td><select onchange="updBank(${b.id},{is_active:this.value==='1'})"><option value="1" ${b.is_active ? "selected" : ""}>Aktif</option><option value="0" ${b.is_active ? "" : "selected"}>Nonaktif</option></select></td></tr>`).join("");
+}
+async function updBank(id, patch) {
+  if (patch.name === "") { toast("Nama rekening tidak boleh kosong.", "err"); return loadBanks(); }
+  const { error } = await sb.from("bank_accounts").update(patch).eq("id", id);
+  if (error) toast("Gagal: " + esc(error.message), "err"); else toast("Tersimpan.");
+  loadBanks();
+}
+async function newBank() {
+  const name = prompt('Nama rekening (mis. "BCA 123-456 a/n Andreas"):');
+  if (!name || !name.trim()) return;
+  const { error } = await sb.from("bank_accounts").insert({ name: name.trim() });
+  if (error) toast("Gagal: " + esc(error.message), "err"); else loadBanks();
+}
+
 async function newPriceList() {
   const name = prompt("Nama daftar harga baru (mis. \"Tempo Khusus\"):");
   if (!name || !name.trim()) return;
   const { error } = await sb.from("price_lists").insert({ name: name.trim() });
   if (error) { toast("Gagal: " + esc(error.message), "err"); return; }
-  toast("Daftar harga dibuat. Isi harganya di tiap produk; yang kosong otomatis pakai harga Umum.");
+  toast("Daftar harga dibuat. Langkah berikut: (1) klik produk → isi harga di bagian daftar baru ini; (2) tab Pelanggan → pilih pelanggan → pasang daftar ini.", "ok", 9000);
   await loadAll();
 }
 
@@ -355,27 +393,33 @@ async function newPriceList() {
 $("cq").addEventListener("keydown", e => { if (e.key === "Enter") searchCustomers(); });
 let custRows = [], editingCust = null;
 
-async function searchCustomers() {
-  const raw = $("cq").value.trim();
-  if (raw.length < 2) { toast("Ketik minimal 2 huruf.", "err"); return; }
-  const q = raw.replace(/[,()%*]/g, " ").trim(), key = raw.toUpperCase().replace(/[^A-Z0-9]/g, "");
-  const [a, b] = await Promise.all([
-    sb.from("customers").select("*, vehicles(*, car_models(brand,model))").or(`name.ilike.%${q}%,phone.ilike.%${q}%`).limit(50),
-    key.length >= 2 ? sb.from("vehicles").select("customer_id").ilike("plate_key", `%${key}%`).limit(50) : Promise.resolve({ data: [] })
-  ]);
-  if (a.error || b.error) { toast(esc(errText(a.error || b.error)), "err"); return; }
-  custRows = a.data;
-  const extra = [...new Set(b.data.map(v => v.customer_id))].filter(id => !custRows.some(c => c.id === id));
-  if (extra.length) {
-    const { data } = await sb.from("customers").select("*, vehicles(*, car_models(brand,model))").in("id", extra);
-    custRows = custRows.concat(data || []);
+async function searchCustomers(latest) {
+  const raw = latest ? "" : $("cq").value.trim();
+  const sel = "*, vehicles(*, car_models(brand,model))";
+  let rows;
+  if (!raw) {
+    const { data, error } = await sb.from("customers").select(sel).order("created_at", { ascending: false }).limit(50);
+    if (error) { toast(esc(error.message), "err"); return; }
+    rows = data;
+  } else {
+    const q = raw.replace(/[,()%*]/g, " ").trim(), key = raw.toUpperCase().replace(/[^A-Z0-9]/g, "");
+    const [a, b] = await Promise.all([
+      sb.from("customers").select(sel).or(`name.ilike.%${q}%,phone.ilike.%${q}%`).limit(50),
+      key.length >= 2 ? sb.from("vehicles").select("customer_id").ilike("plate_key", `%${key}%`).limit(50) : Promise.resolve({ data: [] })
+    ]);
+    if (a.error || b.error) { toast(esc(errText(a.error || b.error)), "err"); return; }
+    rows = a.data;
+    const extra = [...new Set(b.data.map(v => v.customer_id))].filter(id => !rows.some(c => c.id === id));
+    if (extra.length) { const { data } = await sb.from("customers").select(sel).in("id", extra); rows = rows.concat(data || []); }
   }
-  $("ctable").innerHTML = custRows.map((c, i) => `<tr class="click ${c.is_active ? "" : "off"}" onclick="editCustomer(${i})">
-    <td><b>${esc(c.name)}</b>${c.is_active ? "" : " (nonaktif)"}</td><td>${esc(c.phone || "")}</td>
-    <td>${c.vehicles.map(v => esc(v.plate)).join(", ")}</td>
+  custRows = rows;
+  $("ctable").innerHTML = (raw ? "" : `<tr><td colspan="5" class="small muted">50 pelanggan terbaru. Ketik untuk mencari.</td></tr>`) +
+    (custRows.map((c, i) => `<tr class="click ${c.is_active ? "" : "off"}" onclick="editCustomer(${i})">
+    <td><b>${esc(c.name)}</b>${c.is_active ? "" : " (nonaktif)"}</td><td>${esc(c.phone || "")}${c.phone && c.address ? "" : ' <span class="small" style="color:var(--red)">data kurang</span>'}</td>
+    <td>${c.vehicles.map(v => esc(v.plate) + (v.color ? "" : ' <span style="color:var(--red)">(warna?)</span>')).join(", ")}</td>
     <td>${esc((lists.find(l => l.id === c.price_list_id) || { name: "Umum" }).name)}</td>
     <td>${c.allow_tempo ? '<span class="badge b-tempo">Ya</span>' : ""}</td></tr>`).join("")
-    || `<tr><td colspan="5" class="muted">Tidak ditemukan.</td></tr>`;
+    || `<tr><td colspan="5" class="muted">Tidak ditemukan.</td></tr>`);
 }
 
 function editCustomer(i) {
@@ -385,7 +429,8 @@ function editCustomer(i) {
   $("cmList").innerHTML = `<option value="">Umum (standar)</option>` + lists.filter(l => !l.is_default).map(l => `<option value="${l.id}">${esc(l.name)}</option>`).join("");
   $("cmList").value = c.price_list_id || ""; $("cmTempo").value = c.allow_tempo ? "1" : "0"; $("cmActive").value = c.is_active ? "1" : "0";
   $("cmVeh").innerHTML = c.vehicles.length ? c.vehicles.map(v => `<div class="row" style="padding:4px 0">
-      <span class="grow">${esc(v.plate)} · ${esc(v.car_models ? v.car_models.brand + " " + v.car_models.model : "-")} · ${esc(v.color || "")}${v.is_active ? "" : " (nonaktif)"}</span>
+      <span class="grow">${esc(v.plate)} · ${esc(v.car_models ? v.car_models.brand + " " + v.car_models.model : "-")}${v.is_active ? "" : " (nonaktif)"}</span>
+      <input style="width:120px;padding:5px 8px" placeholder="warna *" value="${esc(v.color || "")}" onchange="setVehColor(${v.id}, this.value)">
       <button class="link small" onclick="toggleVehicle(${v.id},${!v.is_active})">${v.is_active ? "Nonaktifkan" : "Aktifkan"}</button></div>`).join("")
     : `<span class="muted">Belum ada.</span>`;
   $("cmErr").textContent = "";
@@ -399,14 +444,23 @@ async function toggleVehicle(id, active) {
   editCustomer(custRows.indexOf(editingCust));
 }
 
+async function setVehColor(id, color) {
+  if (!color.trim()) { $("cmErr").textContent = "Warna tidak boleh kosong."; return; }
+  const { error } = await sb.from("vehicles").update({ color: color.trim() }).eq("id", id);
+  if (error) { $("cmErr").textContent = error.message; return; }
+  editingCust.vehicles.find(x => x.id === id).color = color.trim();
+  toast("Warna tersimpan.");
+}
+
 async function saveCustomer() {
-  const row = { name: $("cmName").value.trim().toUpperCase(), phone: $("cmPhone").value.replace(/[^\d+]/g, "") || null,
+  const row = { name: $("cmName").value.trim().toUpperCase(), phone: $("cmPhone").value.trim() || null,
     address: $("cmAddr").value.trim() || null, price_list_id: Number($("cmList").value) || null,
     allow_tempo: $("cmTempo").value === "1", is_active: $("cmActive").value === "1" };
-  if (!row.name) { $("cmErr").textContent = "Nama wajib diisi."; return; }
+  const need = [!row.name && "nama", !row.phone && "HP", !row.address && "alamat"].filter(Boolean);
+  if (need.length) { $("cmErr").textContent = "Wajib diisi: " + need.join(", ") + ". Kalau pelanggan tidak mau memberi, isi \"-\"."; return; }
   const { error } = await sb.from("customers").update(row).eq("id", editingCust.id);
   if (error) { $("cmErr").textContent = "Gagal simpan: " + error.message; return; }
-  closeModal("custModal"); toast("Pelanggan tersimpan."); searchCustomers();
+  closeModal("custModal"); toast("Pelanggan tersimpan."); searchCustomers(!$("cq").value.trim());
 }
 
 // ═══════════ REVIEW ═══════════
