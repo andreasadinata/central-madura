@@ -1,0 +1,471 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Central POS — Admin</title>
+<link rel="stylesheet" href="style.css">
+<style>
+  #app{min-height:100vh;flex-direction:column}
+  .tabs{display:flex;gap:4px;padding:0 20px;background:var(--surface);border-bottom:1px solid var(--border)}
+  .tabs button{border:none;border-bottom:2px solid transparent;border-radius:0;padding:12px 14px;color:var(--muted)}
+  .tabs button.on{color:var(--accent);border-bottom-color:var(--accent);font-weight:600}
+  .page{padding:20px;max-width:1200px;width:100%}
+  .panel{background:var(--surface);border:1px solid var(--border);border-radius:8px;overflow:hidden}
+  .bar{display:flex;gap:8px;align-items:center;margin-bottom:12px;flex-wrap:wrap}
+  .bar input{max-width:340px}
+  .tiers td{padding:4px 6px;border:none}
+  .tiers input{padding:6px 8px}
+  .listhead{display:flex;justify-content:space-between;align-items:center;margin:14px 0 6px;font-weight:600}
+  .off td{color:var(--faint)}
+</style>
+</head>
+<body>
+
+<div id="login">
+  <div class="login-card">
+    <h1>Central POS — Admin</h1>
+    <p>Untuk owner dan admin</p>
+    <input id="email" type="email" placeholder="Email" autocomplete="username">
+    <input id="pass" type="password" placeholder="Password" autocomplete="current-password">
+    <button class="primary" id="loginBtn">Masuk</button>
+    <div class="err" id="loginErr"></div>
+  </div>
+</div>
+
+<div id="app">
+  <div class="topbar">
+    <div class="logo">CB</div>
+    <div class="brand grow"><b>Admin</b><span id="who">—</span></div>
+    <a href="index.html"><button>Ke kasir</button></a>
+    <button onclick="logout()">Keluar</button>
+  </div>
+  <div class="tabs">
+    <button id="t-produk" onclick="tab('produk')">Produk & harga</button>
+    <button id="t-pelanggan" onclick="tab('pelanggan')">Pelanggan</button>
+    <button id="t-tinjauan" onclick="tab('tinjauan')">Tinjauan harian</button>
+    <button id="t-pengguna" onclick="tab('pengguna')" class="hide">Pengguna</button>
+  </div>
+
+  <!-- PRODUK -->
+  <div class="page hide" id="p-produk">
+    <div class="bar">
+      <input id="pq" placeholder="Cari nama / SKU / barcode…" oninput="renderProducts()">
+      <select id="pcat" style="max-width:200px" onchange="renderProducts()"></select>
+      <label class="row small" style="margin:0"><input type="checkbox" id="pinactive" style="width:auto" onchange="renderProducts()"> tampilkan nonaktif</label>
+      <span class="grow"></span>
+      <span class="small muted">Daftar harga:</span> <span id="plists"></span>
+      <button onclick="newPriceList()">+ Daftar harga</button>
+      <button class="primary" onclick="editProduct(null)">+ Produk baru</button>
+    </div>
+    <div class="panel"><table>
+      <thead><tr><th>SKU</th><th>Nama</th><th>Kategori</th><th>Harga umum</th><th class="num">Stok</th></tr></thead>
+      <tbody id="ptable"></tbody></table></div>
+  </div>
+
+  <!-- PELANGGAN -->
+  <div class="page hide" id="p-pelanggan">
+    <div class="bar"><input id="cq" placeholder="Cari nama / HP / plat…"><button onclick="searchCustomers()">Cari</button></div>
+    <div class="panel"><table>
+      <thead><tr><th>Nama</th><th>HP</th><th>Kendaraan</th><th>Daftar harga</th><th>Tempo</th></tr></thead>
+      <tbody id="ctable"><tr><td colspan="5" class="muted">Cari pelanggan untuk mengatur daftar harga & izin tempo.</td></tr></tbody></table></div>
+  </div>
+
+  <!-- TINJAUAN -->
+  <div class="page hide" id="p-tinjauan">
+    <div class="bar">
+      <label style="margin:0">Dari</label><input type="date" id="rfrom" style="width:160px">
+      <label style="margin:0">Sampai</label><input type="date" id="rto" style="width:160px">
+      <button class="primary" onclick="loadReview()">Tampilkan</button>
+      <span class="small muted">Semua pembatalan, void, harga turun, tambahan setelah cetak, uang kembali, lebih bayar, stok minus.</span>
+    </div>
+    <div class="panel"><table>
+      <thead><tr><th>Waktu</th><th>Jenis</th><th>Invoice</th><th>Oleh</th><th>Keterangan</th><th class="num">Nilai</th></tr></thead>
+      <tbody id="rtable"></tbody></table></div>
+  </div>
+
+  <!-- PENGGUNA -->
+  <div class="page hide" id="p-pengguna">
+    <div class="bar"><span class="grow"></span><button class="primary" onclick="openUserModal()">+ Pengguna</button></div>
+    <div class="panel"><table>
+      <thead><tr><th>Nama</th><th>Email</th><th>Peran</th><th>Cabang</th><th>Aktif</th><th></th></tr></thead>
+      <tbody id="utable"></tbody></table></div>
+  </div>
+</div>
+
+<!-- PRODUCT MODAL -->
+<div class="overlay" id="prodModal">
+  <div class="modal" style="width:640px">
+    <header><h3 id="pmTitle">Produk</h3><button onclick="closeModal('prodModal')">Tutup</button></header>
+    <div class="body">
+      <div class="grid2">
+        <div class="field"><label>Kategori *</label><select id="pmCat" onchange="suggestSku()"></select></div>
+        <div class="field"><label>SKU *</label><input id="pmSku" style="text-transform:uppercase"></div>
+      </div>
+      <div class="field"><label>Nama *</label><input id="pmName"></div>
+      <div class="grid2">
+        <div class="field"><label>Merk</label><input id="pmBrand"></div>
+        <div class="field"><label>Barcode (scan di sini)</label><input id="pmBarcode"></div>
+      </div>
+      <div class="grid2">
+        <div class="field"><label>Jenis</label><select id="pmService"><option value="0">Barang (pakai stok)</option><option value="1">Jasa (tanpa stok)</option></select></div>
+        <div class="field"><label>Grup jasa (untuk laporan, mis. "Balancing")</label><input id="pmGroup"></div>
+      </div>
+      <div class="grid2">
+        <div class="field"><label>Isi per dus (info saja)</label><input id="pmDus" inputmode="numeric"></div>
+        <div class="field"><label>Status</label><select id="pmActive"><option value="1">Aktif</option><option value="0">Nonaktif</option></select></div>
+      </div>
+      <div id="pmTiers"></div>
+      <div class="err" id="pmErr"></div>
+    </div>
+    <footer><button onclick="closeModal('prodModal')">Batal</button><button class="primary" id="pmSave" onclick="saveProduct()">Simpan</button></footer>
+  </div>
+</div>
+
+<!-- CUSTOMER MODAL -->
+<div class="overlay" id="custModal">
+  <div class="modal">
+    <header><h3>Pelanggan</h3><button onclick="closeModal('custModal')">Tutup</button></header>
+    <div class="body">
+      <div class="field"><label>Nama</label><input id="cmName"></div>
+      <div class="grid2">
+        <div class="field"><label>HP</label><input id="cmPhone"></div>
+        <div class="field"><label>Alamat</label><input id="cmAddr"></div>
+      </div>
+      <div class="grid2">
+        <div class="field"><label>Daftar harga</label><select id="cmList"></select></div>
+        <div class="field"><label>Boleh tempo?</label><select id="cmTempo"><option value="0">Tidak</option><option value="1">Ya</option></select></div>
+      </div>
+      <div class="field"><label>Status</label><select id="cmActive"><option value="1">Aktif</option><option value="0">Nonaktif</option></select></div>
+      <div class="listhead">Kendaraan</div>
+      <div id="cmVeh" class="small"></div>
+      <div class="err" id="cmErr"></div>
+    </div>
+    <footer><button onclick="closeModal('custModal')">Batal</button><button class="primary" onclick="saveCustomer()">Simpan</button></footer>
+  </div>
+</div>
+
+<!-- USER MODAL -->
+<div class="overlay" id="userModal">
+  <div class="modal">
+    <header><h3>Pengguna baru</h3><button onclick="closeModal('userModal')">Tutup</button></header>
+    <div class="body">
+      <div class="field"><label>Nama</label><input id="umName"></div>
+      <div class="grid2">
+        <div class="field"><label>Email (untuk login)</label><input id="umEmail" type="email"></div>
+        <div class="field"><label>Password (min 8)</label><input id="umPass" type="text"></div>
+      </div>
+      <div class="grid2">
+        <div class="field"><label>Peran</label><select id="umRole"><option value="kasir">Kasir</option><option value="admin">Admin</option><option value="owner">Owner</option></select></div>
+        <div class="field"><label>Cabang</label><select id="umLoc"></select></div>
+      </div>
+      <p class="small muted">Kasir: jual, batal item & void (tercatat). Admin: + ubah produk, harga, pelanggan. Owner: + kelola pengguna.</p>
+      <div class="err" id="umErr"></div>
+    </div>
+    <footer><button onclick="closeModal('userModal')">Batal</button><button class="primary" id="umSave" onclick="createUser()">Buat akun</button></footer>
+  </div>
+</div>
+
+<div id="toast"></div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="config.js"></script>
+<script src="common.js"></script>
+<script>
+let cats = [], products = [], tiers = {}, stock = {}, lists = [], locations = [];
+let defaultList = null;
+const todayJkt = () => new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Jakarta" });
+const closeModal = id => $(id).classList.remove("open");
+
+authGate(start, ["owner", "admin"]);
+
+async function start() {
+  $("who").textContent = ME.full_name + " · " + ME.role;
+  if (ME.role === "owner") $("t-pengguna").classList.remove("hide");
+  $("rfrom").value = $("rto").value = todayJkt();
+  try { await loadAll(); } catch (e) { toast("Gagal memuat: " + esc(errText(e)), "err"); return; }
+  tab(location.hash.slice(1) || "produk");
+}
+
+function tab(name) {
+  ["produk", "pelanggan", "tinjauan", "pengguna"].forEach(n => {
+    $("p-" + n).classList.toggle("hide", n !== name);
+    $("t-" + n).classList.toggle("on", n === name);
+  });
+  history.replaceState(null, "", "#" + name);
+  if (name === "tinjauan") loadReview();
+  if (name === "pengguna") loadUsers();
+}
+
+async function loadAll() {
+  const [c, p, t, s, l, loc] = await Promise.all([
+    sb.from("categories").select("*").order("sort"),
+    fetchAll(() => sb.from("products").select("*").order("name")),
+    fetchAll(() => sb.from("price_tiers").select("*").order("id")),
+    fetchAll(() => sb.from("product_stock").select("*").order("product_id")),
+    sb.from("price_lists").select("*").order("id"),
+    sb.from("locations").select("*").order("id")
+  ]);
+  if (c.error) throw c.error; if (l.error) throw l.error; if (loc.error) throw loc.error;
+  cats = c.data; products = p; lists = l.data; locations = loc.data;
+  defaultList = (lists.find(x => x.is_default) || {}).id;
+  tiers = {}; t.forEach(r => (tiers[r.product_id] ||= []).push(r));
+  stock = {}; s.forEach(r => stock[r.product_id] = (stock[r.product_id] || 0) + Number(r.qty));
+  $("pcat").innerHTML = `<option value="">Semua kategori</option>` + cats.map(x => `<option value="${x.id}">${esc(x.name)}</option>`).join("");
+  $("pmCat").innerHTML = cats.map(x => `<option value="${x.id}">${esc(x.name)} (${x.code})</option>`).join("");
+  $("plists").innerHTML = lists.map(x => `<span class="chip">${esc(x.name)}${x.is_default ? " ★" : ""}</span>`).join(" ");
+  renderProducts();
+}
+
+// ═══════════ PRODUCTS ═══════════
+const tierSummary = (pid, lid) => (tiers[pid] || []).filter(t => t.price_list_id === lid)
+  .sort((a, b) => a.min_qty - b.min_qty).map(t => `${num(t.min_qty)}+ : ${num(t.price)}`).join(" · ");
+
+function renderProducts() {
+  const term = $("pq").value.trim().toLowerCase(), cat = Number($("pcat").value) || null, showOff = $("pinactive").checked;
+  const list = products.filter(p => (showOff || p.is_active) && (!cat || p.category_id === cat) &&
+    (!term || (p.name + " " + p.sku + " " + (p.barcode || "")).toLowerCase().includes(term))).slice(0, 300);
+  $("ptable").innerHTML = list.map(p => `<tr class="click ${p.is_active ? "" : "off"}" onclick="editProduct(${p.id})">
+    <td>${esc(p.sku)}</td><td>${esc(p.name)}${p.is_active ? "" : " (nonaktif)"}</td>
+    <td>${esc((cats.find(c => c.id === p.category_id) || {}).name)}</td>
+    <td>${tierSummary(p.id, defaultList) || '<span style="color:var(--red)">belum ada harga</span>'}</td>
+    <td class="num">${p.is_service ? "jasa" : num(stock[p.id] || 0)}</td></tr>`).join("")
+    || `<tr><td colspan="5" class="muted">Tidak ada produk.</td></tr>`;
+}
+
+let editingProduct = null, draftTiers = {};
+function editProduct(id) {
+  editingProduct = id ? products.find(p => p.id === id) : null;
+  const p = editingProduct || { category_id: cats[0].id, is_service: false, is_active: true };
+  $("pmTitle").textContent = id ? "Ubah produk" : "Produk baru";
+  $("pmCat").value = p.category_id; $("pmSku").value = p.sku || "";
+  $("pmName").value = p.name || ""; $("pmBrand").value = p.brand || ""; $("pmBarcode").value = p.barcode || "";
+  $("pmService").value = p.is_service ? "1" : "0"; $("pmGroup").value = p.service_group || "";
+  $("pmDus").value = p.isi_per_dus || ""; $("pmActive").value = p.is_active ? "1" : "0";
+  $("pmSku").disabled = !!id;   // SKU never changes once used
+  draftTiers = {};
+  lists.forEach(l => draftTiers[l.id] = (tiers[id] || []).filter(t => t.price_list_id === l.id)
+    .sort((a, b) => a.min_qty - b.min_qty).map(t => ({ id: t.id, min_qty: Number(t.min_qty), price: Number(t.price) })));
+  if (!id) { draftTiers[defaultList] = [{ min_qty: 1, price: 0 }]; suggestSku(); }
+  renderTiers();
+  $("pmErr").textContent = "";
+  $("prodModal").classList.add("open");
+}
+
+function suggestSku() {
+  if (editingProduct) return;
+  const c = cats.find(x => x.id === Number($("pmCat").value));
+  const max = products.map(p => p.sku).filter(s => s.startsWith(c.code + "-"))
+    .map(s => parseInt(s.slice(c.code.length + 1)) || 0).reduce((a, b) => Math.max(a, b), 0);
+  $("pmSku").value = c.code + "-" + String(max + 1).padStart(4, "0");
+}
+
+function renderTiers() {
+  $("pmTiers").innerHTML = lists.map(l => `
+    <div class="listhead"><span>Harga — ${esc(l.name)}${l.is_default ? " (wajib)" : " <span class='small muted'>(kosongkan = pakai harga Umum)</span>"}</span>
+      <button class="small" onclick="addTier(${l.id})">+ tingkat</button></div>
+    <table class="tiers">${draftTiers[l.id].map((t, i) => `<tr>
+      <td style="width:150px"><label>Mulai qty</label><input value="${t.min_qty}" inputmode="decimal" onchange="draftTiers[${l.id}][${i}].min_qty=Number(this.value.replace(',','.'))"></td>
+      <td><label>Harga satuan</label><input value="${num(t.price)}" inputmode="numeric" oninput="this.value=num(parseRp(this.value))" onchange="draftTiers[${l.id}][${i}].price=parseRp(this.value)"></td>
+      <td style="width:60px;vertical-align:bottom"><button class="link danger small" onclick="draftTiers[${l.id}].splice(${i},1);renderTiers()">hapus</button></td></tr>`).join("")
+      || `<tr><td class="small muted">Belum ada.</td></tr>`}</table>`).join("");
+}
+function addTier(lid) {
+  const rows = draftTiers[lid];
+  rows.push({ min_qty: rows.length ? Math.max(...rows.map(r => r.min_qty)) + 1 : 1, price: rows.length ? rows[rows.length - 1].price : 0 });
+  renderTiers();
+}
+
+async function saveProduct() {
+  const err = $("pmErr"); err.textContent = "";
+  const row = {
+    category_id: Number($("pmCat").value), name: $("pmName").value.trim(),
+    brand: $("pmBrand").value.trim() || null, barcode: $("pmBarcode").value.trim() || null,
+    is_service: $("pmService").value === "1", service_group: $("pmGroup").value.trim() || null,
+    isi_per_dus: parseInt($("pmDus").value) || null, is_active: $("pmActive").value === "1"
+  };
+  if (!row.name) { err.textContent = "Nama wajib diisi."; return; }
+  for (const l of lists) {
+    const rows = draftTiers[l.id];
+    if (rows.some(r => !(r.min_qty > 0) || !(r.price >= 0))) { err.textContent = `Daftar ${l.name}: qty harus > 0 dan harga ≥ 0.`; return; }
+    if (new Set(rows.map(r => r.min_qty)).size !== rows.length) { err.textContent = `Daftar ${l.name}: ada qty yang sama dua kali.`; return; }
+  }
+  const def = draftTiers[defaultList];
+  if (!def.some(r => r.min_qty === 1)) { err.textContent = "Harga Umum wajib punya tingkat mulai qty 1."; return; }
+  if (def.some(r => r.price === 0) && !confirm("Ada harga Umum Rp 0. Benar?")) return;
+
+  $("pmSave").disabled = true;
+  try {
+    let pid;
+    if (editingProduct) {
+      const { error } = await sb.from("products").update(row).eq("id", editingProduct.id);
+      if (error) throw error;
+      pid = editingProduct.id;
+    } else {
+      row.sku = $("pmSku").value.trim().toUpperCase();
+      if (!row.sku) throw new Error("SKU wajib diisi.");
+      const { data, error } = await sb.from("products").insert(row).select().single();
+      if (error) throw error;
+      pid = data.id;
+    }
+    // sync tiers: delete removed, update changed, insert new
+    const old = tiers[pid] || [];
+    const keep = new Set(Object.values(draftTiers).flat().filter(t => t.id).map(t => t.id));
+    const del = old.filter(t => !keep.has(t.id)).map(t => t.id);
+    if (del.length) { const { error } = await sb.from("price_tiers").delete().in("id", del); if (error) throw error; }
+    for (const l of lists) for (const t of draftTiers[l.id]) {
+      if (t.id) {
+        const o = old.find(x => x.id === t.id);
+        if (Number(o.min_qty) !== t.min_qty || Number(o.price) !== t.price) {
+          const { error } = await sb.from("price_tiers").update({ min_qty: t.min_qty, price: t.price }).eq("id", t.id);
+          if (error) throw error;
+        }
+      } else {
+        const { error } = await sb.from("price_tiers").insert({ price_list_id: l.id, product_id: pid, min_qty: t.min_qty, price: t.price });
+        if (error) throw error;
+      }
+    }
+    closeModal("prodModal");
+    toast("Produk tersimpan.");
+    await loadAll();
+  } catch (e) { err.textContent = "Gagal simpan: " + errText(e); }
+  finally { $("pmSave").disabled = false; }
+}
+
+async function newPriceList() {
+  const name = prompt("Nama daftar harga baru (mis. \"Tempo Khusus\"):");
+  if (!name || !name.trim()) return;
+  const { error } = await sb.from("price_lists").insert({ name: name.trim() });
+  if (error) { toast("Gagal: " + esc(error.message), "err"); return; }
+  toast("Daftar harga dibuat. Isi harganya di tiap produk; yang kosong otomatis pakai harga Umum.");
+  await loadAll();
+}
+
+// ═══════════ CUSTOMERS ═══════════
+$("cq").addEventListener("keydown", e => { if (e.key === "Enter") searchCustomers(); });
+let custRows = [], editingCust = null;
+
+async function searchCustomers() {
+  const raw = $("cq").value.trim();
+  if (raw.length < 2) { toast("Ketik minimal 2 huruf.", "err"); return; }
+  const q = raw.replace(/[,()%*]/g, " ").trim(), key = raw.toUpperCase().replace(/[^A-Z0-9]/g, "");
+  const [a, b] = await Promise.all([
+    sb.from("customers").select("*, vehicles(*, car_models(brand,model))").or(`name.ilike.%${q}%,phone.ilike.%${q}%`).limit(50),
+    key.length >= 2 ? sb.from("vehicles").select("customer_id").ilike("plate_key", `%${key}%`).limit(50) : Promise.resolve({ data: [] })
+  ]);
+  if (a.error || b.error) { toast(esc(errText(a.error || b.error)), "err"); return; }
+  custRows = a.data;
+  const extra = [...new Set(b.data.map(v => v.customer_id))].filter(id => !custRows.some(c => c.id === id));
+  if (extra.length) {
+    const { data } = await sb.from("customers").select("*, vehicles(*, car_models(brand,model))").in("id", extra);
+    custRows = custRows.concat(data || []);
+  }
+  $("ctable").innerHTML = custRows.map((c, i) => `<tr class="click ${c.is_active ? "" : "off"}" onclick="editCustomer(${i})">
+    <td><b>${esc(c.name)}</b>${c.is_active ? "" : " (nonaktif)"}</td><td>${esc(c.phone || "")}</td>
+    <td>${c.vehicles.map(v => esc(v.plate)).join(", ")}</td>
+    <td>${esc((lists.find(l => l.id === c.price_list_id) || { name: "Umum" }).name)}</td>
+    <td>${c.allow_tempo ? '<span class="badge b-tempo">Ya</span>' : ""}</td></tr>`).join("")
+    || `<tr><td colspan="5" class="muted">Tidak ditemukan.</td></tr>`;
+}
+
+function editCustomer(i) {
+  editingCust = custRows[i];
+  const c = editingCust;
+  $("cmName").value = c.name; $("cmPhone").value = c.phone || ""; $("cmAddr").value = c.address || "";
+  $("cmList").innerHTML = `<option value="">Umum (standar)</option>` + lists.filter(l => !l.is_default).map(l => `<option value="${l.id}">${esc(l.name)}</option>`).join("");
+  $("cmList").value = c.price_list_id || ""; $("cmTempo").value = c.allow_tempo ? "1" : "0"; $("cmActive").value = c.is_active ? "1" : "0";
+  $("cmVeh").innerHTML = c.vehicles.length ? c.vehicles.map(v => `<div class="row" style="padding:4px 0">
+      <span class="grow">${esc(v.plate)} · ${esc(v.car_models ? v.car_models.brand + " " + v.car_models.model : "-")} · ${esc(v.color || "")}${v.is_active ? "" : " (nonaktif)"}</span>
+      <button class="link small" onclick="toggleVehicle(${v.id},${!v.is_active})">${v.is_active ? "Nonaktifkan" : "Aktifkan"}</button></div>`).join("")
+    : `<span class="muted">Belum ada.</span>`;
+  $("cmErr").textContent = "";
+  $("custModal").classList.add("open");
+}
+
+async function toggleVehicle(id, active) {
+  const { error } = await sb.from("vehicles").update({ is_active: active }).eq("id", id);
+  if (error) { $("cmErr").textContent = error.message; return; }
+  const v = editingCust.vehicles.find(x => x.id === id); v.is_active = active;
+  editCustomer(custRows.indexOf(editingCust));
+}
+
+async function saveCustomer() {
+  const row = { name: $("cmName").value.trim().toUpperCase(), phone: $("cmPhone").value.replace(/[^\d+]/g, "") || null,
+    address: $("cmAddr").value.trim() || null, price_list_id: Number($("cmList").value) || null,
+    allow_tempo: $("cmTempo").value === "1", is_active: $("cmActive").value === "1" };
+  if (!row.name) { $("cmErr").textContent = "Nama wajib diisi."; return; }
+  const { error } = await sb.from("customers").update(row).eq("id", editingCust.id);
+  if (error) { $("cmErr").textContent = "Gagal simpan: " + error.message; return; }
+  closeModal("custModal"); toast("Pelanggan tersimpan."); searchCustomers();
+}
+
+// ═══════════ REVIEW ═══════════
+async function loadReview() {
+  const { data, error } = await sb.rpc("review_list", { p_from: $("rfrom").value, p_to: $("rto").value });
+  if (error) { $("rtable").innerHTML = `<tr><td colspan="6" class="err">${esc(error.message)}</td></tr>`; return; }
+  $("rtable").innerHTML = data.map(r => `<tr><td class="small">${r.at ? new Date(r.at).toLocaleString("id-ID", { timeZone: "Asia/Jakarta" }) : ""}</td>
+    <td><b>${esc(r.kind)}</b></td><td>${esc(r.invoice || "")}</td><td>${esc(r.who || "")}</td><td>${esc(r.detail)}</td>
+    <td class="num">${r.amount == null ? "" : num(r.amount)}</td></tr>`).join("")
+    || `<tr><td colspan="6" class="muted">Bersih — tidak ada perubahan.</td></tr>`;
+}
+
+// ═══════════ USERS (owner) ═══════════
+async function loadUsers() {
+  const { data, error } = await sb.from("profiles").select("*").order("created_at");
+  if (error) { $("utable").innerHTML = `<tr><td colspan="6" class="err">${esc(error.message)}</td></tr>`; return; }
+  const locOpts = sel => locations.map(l => `<option value="${l.id}" ${l.id === sel ? "selected" : ""}>${esc(l.code)}</option>`).join("");
+  $("utable").innerHTML = data.map(u => {
+    const self = u.id === ME.id;
+    return `<tr class="${u.is_active ? "" : "off"}"><td><b>${esc(u.full_name)}</b></td><td>${esc(u.email || "")}</td>
+      <td><select ${self ? "disabled" : ""} onchange="updUser('${u.id}',{role:this.value})">
+        ${["kasir","admin","owner"].map(r => `<option ${u.role === r ? "selected" : ""}>${r}</option>`).join("")}</select></td>
+      <td><select onchange="updUser('${u.id}',{location_id:Number(this.value)})">${locOpts(u.location_id)}</select></td>
+      <td><select ${self ? "disabled" : ""} onchange="updUser('${u.id}',{is_active:this.value==='1'})">
+        <option value="1" ${u.is_active ? "selected" : ""}>Aktif</option><option value="0" ${u.is_active ? "" : "selected"}>Nonaktif</option></select></td>
+      <td><button class="link small" onclick="resetPw('${u.id}','${esc(u.full_name)}')">Ganti password</button></td></tr>`;
+  }).join("");
+}
+
+async function updUser(id, patch) {
+  const { error } = await sb.from("profiles").update(patch).eq("id", id);
+  if (error) toast("Gagal: " + esc(error.message), "err"); else toast("Tersimpan.");
+  loadUsers();
+}
+
+function openUserModal() {
+  ["umName", "umEmail", "umPass"].forEach(i => $(i).value = "");
+  $("umLoc").innerHTML = locations.map(l => `<option value="${l.id}">${esc(l.name)}</option>`).join("");
+  $("umLoc").value = ME.location_id; $("umErr").textContent = "";
+  $("userModal").classList.add("open");
+}
+
+async function callAdmin(body) {
+  const { data, error } = await sb.functions.invoke("admin-users", { body });
+  if (error) {
+    // the function's own message is inside the response body
+    let msg = error.message;
+    try { msg = (await error.context.json()).error || msg; } catch (_) {}
+    throw new Error(msg);
+  }
+  return data;
+}
+
+async function createUser() {
+  $("umErr").textContent = ""; $("umSave").disabled = true;
+  try {
+    await callAdmin({ action: "create", full_name: $("umName").value.trim(), email: $("umEmail").value.trim(),
+      password: $("umPass").value, role: $("umRole").value, location_id: $("umLoc").value });
+    closeModal("userModal"); toast("Akun dibuat. Berikan email & password ke orangnya."); loadUsers();
+  } catch (e) { $("umErr").textContent = errText(e); }
+  finally { $("umSave").disabled = false; }
+}
+
+async function resetPw(id, name) {
+  const pw = prompt(`Password baru untuk ${name} (min 8 karakter):`);
+  if (!pw) return;
+  try { await callAdmin({ action: "reset_password", user_id: id, password: pw }); toast("Password diganti."); }
+  catch (e) { toast(esc(errText(e)), "err"); }
+}
+</script>
+</body>
+</html>
