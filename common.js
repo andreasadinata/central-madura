@@ -66,7 +66,39 @@ function authGate(onReady, allowedRoles) {
     onReady();
   }
 
-  sb.auth.getSession().then(({ data: { session } }) => { if (session) boot(); });
+  // "Lupa password?": Supabase emails a link back to this page; opening it fires PASSWORD_RECOVERY.
+  const fb = $("forgotBtn");
+  if (fb) fb.onclick = async () => {
+    const email = $("email").value.trim();
+    if (!email) { $("loginErr").textContent = "Isi email dulu, lalu klik Lupa password."; return; }
+    const { error } = await sb.auth.resetPasswordForEmail(email, { redirectTo: location.origin + location.pathname });
+    $("loginErr").textContent = error ? "Gagal kirim email: " + error.message
+      : "Link ganti password dikirim ke " + email + ". Buka email itu di perangkat ini (cek juga folder Junk/Spam).";
+  };
+
+  let recovering = false;
+  sb.auth.onAuthStateChange(event => { if (event === "PASSWORD_RECOVERY") { recovering = true; showSetPassword(boot); } });
+  sb.auth.getSession().then(({ data: { session } }) => {
+    if (session && !recovering && !location.hash.includes("type=recovery")) boot();
+  });
+}
+
+function showSetPassword(then) {
+  const card = document.querySelector("#login .login-card");
+  card.innerHTML = `<h1>Password baru</h1><p>Minimal 8 karakter.</p>
+    <input id="np1" type="password" placeholder="Password baru" autocomplete="new-password">
+    <input id="np2" type="password" placeholder="Ulangi password baru" autocomplete="new-password">
+    <button class="primary" id="npBtn">Simpan password</button><div class="err" id="npErr"></div>`;
+  $("login").classList.remove("hide");
+  $("npBtn").onclick = async () => {
+    const a = $("np1").value, b = $("np2").value;
+    if (a.length < 8) { $("npErr").textContent = "Password minimal 8 karakter."; return; }
+    if (a !== b) { $("npErr").textContent = "Kedua password tidak sama."; return; }
+    const { error } = await sb.auth.updateUser({ password: a });
+    if (error) { $("npErr").textContent = "Gagal: " + error.message; return; }
+    history.replaceState(null, "", location.pathname);
+    then();
+  };
 }
 
 async function logout() { await sb.auth.signOut(); location.reload(); }

@@ -1,0 +1,11 @@
+-- 24 Nov 2026 (applied as Supabase migration "v3_purchases_adjustments_categories_stats";
+-- full text in Supabase → Database → Migrations).
+-- • Categories are for GOODS only (Ban, Ban Truk, Oli, Minyak Rem, Air Radiator, Sparepart, Aki, Lainnya).
+--   Services have no category; they group by service_group. Car models: only owner/admin can add.
+-- • suppliers, purchases (+ purchase_items): never edited; corrections are new purchases with corrects_id,
+--   a reason, and the ORIGINAL received_date. Stock moves kind 'purchase' carry unit_cost.
+-- • stock_adjustments (+ items): opname — counted vs system qty, difference valued at avg_cost().
+-- • avg_cost(product, location): moving average of all purchase costs.
+-- • Views: product_sales_stats (total sold, last calendar month, avg of last 3 months), product_last_cost.
+-- • review_extra(): purchase corrections + stock adjustments for the daily review list.
+-- • Functions: create_purchase(...), create_stock_adjustment(reason, items).

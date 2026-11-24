@@ -66,10 +66,7 @@
   .total b{font-size:28px;letter-spacing:-.02em}
   .seg{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:10px}
   .seg button.on{background:var(--accent);border-color:var(--accent);color:#fff;font-weight:600}
-  .seg2{display:flex;gap:0;margin-bottom:10px}
-  .seg2 button{flex:1;border-radius:0;padding:6px;font-size:12px}
-  .seg2 button:first-child{border-radius:var(--r) 0 0 var(--r)} .seg2 button:last-child{border-radius:0 var(--r) var(--r) 0}
-  .seg2 button.on{background:var(--accent-soft);border-color:var(--accent);color:var(--accent-ink);font-weight:600}
+  .foot .seg2{margin-bottom:10px}
   .payrow{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:10px}
   .acts{display:grid;grid-template-columns:1fr 1.6fr;gap:8px}
   .acts button{height:48px;font-weight:600}
@@ -108,6 +105,7 @@
     <input id="pass" type="password" placeholder="Password" autocomplete="current-password">
     <button class="primary" id="loginBtn">Masuk</button>
     <div class="err" id="loginErr"></div>
+    <button class="link forgot" id="forgotBtn">Lupa password?</button>
   </div>
 </div>
 
@@ -130,7 +128,10 @@
           <input id="q" placeholder="Cari produk / jasa / kode / scan barcode…" autocomplete="off">
         </div>
       </div>
-      <div class="chips" id="chips"></div>
+      <div class="row" style="gap:10px;align-items:flex-start">
+        <div class="seg2" style="width:180px;flex-shrink:0"><button id="kB" onclick="setKind('barang')">Barang</button><button id="kJ" onclick="setKind('jasa')">Jasa</button></div>
+        <div class="chips" id="chips"></div>
+      </div>
       <div class="grid" id="grid"><div class="empty">Memuat produk…</div></div>
     </div>
 
@@ -198,9 +199,9 @@
         <div class="field"><label>Plat nomor *</label><input id="cmPlate" style="text-transform:uppercase"></div>
         <div class="field"><label>Warna *</label><input id="cmColor" placeholder="mis. Hitam"></div>
       </div>
-      <div class="field"><label>Mobil (merk + tipe)</label><input id="cmModel" list="modelList" placeholder="mis. Toyota Avanza"></div>
+      <div class="field"><label>Mobil (merk + tipe) * <button class="link tiny hide" id="cmNewModel" onclick="newCarModel()">+ model baru</button></label><select id="cmModel"></select></div>
       </div>
-      <datalist id="modelList"></datalist>
+      
       <div class="err" id="cmErr"></div>
     </div>
     <footer><button onclick="closeModal('custModal')">Batal</button><button class="primary" id="cmSave" onclick="saveCustModal()">Simpan</button></footer>
@@ -217,7 +218,7 @@
 // ═══════════════════════ STATE ═══════════════════════
 let cats = [], products = [], byId = {}, tiers = {}, stock = {}, carModels = [];
 let defaultList = null, priceListNames = {};
-let catFilter = null;
+let catFilter = null, kind = "jasa";   // kind: "barang" | "jasa"; catFilter: category id (barang) or service group (jasa)
 let cust = null, vehicles = [], vehicleId = null, freePlate = "";
 let sale = null;            // loaded saved invoice (null = new invoice)
 let cart = [];              // lines not yet saved: {pid, qty, price, reason, manual}
@@ -240,7 +241,7 @@ async function start() {
     await loadMaster();
   } catch (e) { toast("Gagal memuat data: " + esc(errText(e)), "err"); return; }
   await setCustomer(null);
-  renderChips(); renderGrid(); renderAll(); refreshPending();
+  setKind("jasa"); renderAll(); refreshPending();
   $("q").focus();
 }
 
@@ -260,7 +261,7 @@ async function loadMaster() {
   tiers = {}; t.forEach(r => (tiers[r.product_id] ||= []).push(r));
   stock = {}; s.forEach(r => stock[r.product_id] = Number(r.qty));
   pl.data.forEach(l => { priceListNames[l.id] = l.name; if (l.is_default) defaultList = l.id; });
-  $("modelList").innerHTML = carModels.map(m => `<option value="${esc(m.brand + " " + m.model)}">`).join("");
+  fillModels();
 }
 
 
@@ -268,11 +269,18 @@ async function loadMaster() {
 const catName = id => (cats.find(c => c.id === id) || {}).name || "";
 const stdPrice = (pid, qty) => tierFor(tiers, pid, cust?.price_list_id, defaultList, qty);
 
+function setKind(k) { kind = k; catFilter = null; renderChips(); renderGrid(); }
 function renderChips() {
+  $("kB").classList.toggle("on", kind === "barang"); $("kJ").classList.toggle("on", kind === "jasa");
+  const opts = kind === "barang"
+    ? cats.filter(c => products.some(p => p.category_id === c.id)).map(c => [c.id, c.name])
+    : [...new Set(products.filter(p => p.is_service && p.service_group).map(p => p.service_group))].sort().map(g => [g, g]);
   $("chips").innerHTML = [`<button class="${catFilter === null ? "on" : ""}" onclick="setCat(null)">Semua</button>`]
-    .concat(cats.map(c => `<button class="${catFilter === c.id ? "on" : ""}" onclick="setCat(${c.id})">${esc(c.name)}</button>`)).join("");
+    .concat(opts.map(([v, l]) => `<button class="${catFilter === v ? "on" : ""}" onclick='setCat(${JSON.stringify(v)})'>${esc(l)}</button>`)).join("");
 }
-function setCat(id) { catFilter = id; renderChips(); renderGrid(); }
+function setCat(v) { catFilter = v; renderChips(); renderGrid(); }
+const inFilter = p => (p.is_service === (kind === "jasa")) &&
+  (catFilter === null || (kind === "barang" ? p.category_id === catFilter : p.service_group === catFilter));
 
 function matches(p, term) {
   if (!term) return true;
@@ -282,12 +290,13 @@ function matches(p, term) {
 
 function renderGrid() {
   const term = $("q").value.trim().toLowerCase();
-  const list = products.filter(p => (catFilter === null || p.category_id === catFilter) && matches(p, term)).slice(0, 90);
+  // typing searches everything (barang + jasa); the toggle and chips only filter when the search box is empty
+  const list = products.filter(p => (term ? true : inFilter(p)) && matches(p, term)).slice(0, 90);
   if (!list.length) { $("grid").innerHTML = `<div class="empty">Tidak ada hasil untuk "${esc($("q").value)}".</div>`; return; }
   $("grid").innerHTML = list.map(p => {
     const t = stdPrice(p.id, 1), st = stock[p.id] || 0;
     return `<button class="card" onclick="addProduct(${p.id})">
-      <span class="cat">${esc(catName(p.category_id))}</span>
+      <span class="cat">${esc(p.is_service ? (p.service_group || "Jasa") : catName(p.category_id))}</span>
       <span class="nm">${esc(p.name)}</span>
       <span class="ft"><span class="pr">${t ? num(t.price) : "<span class='muted small'>belum ada harga</span>"}</span>
       <span class="st ${!p.is_service && st <= 0 ? "low" : ""}">${p.is_service ? "jasa" : "stok " + num(st)}</span></span>
@@ -303,7 +312,7 @@ $("q").addEventListener("keydown", e => {
   let hit = products.find(p => p.barcode && p.barcode === raw) || products.find(p => p.sku.toUpperCase() === raw.toUpperCase());
   if (!hit) {
     const term = raw.toLowerCase();
-    const list = products.filter(p => (catFilter === null || p.category_id === catFilter) && matches(p, term));
+    const list = products.filter(p => matches(p, term));
     if (list.length === 1) hit = list[0];
   }
   if (hit) { addProduct(hit.id); $("q").value = ""; renderGrid(); }
@@ -449,6 +458,7 @@ function openCustModal(mode) {
   $("cmCustFields").classList.toggle("hide", mode === "vehicle");
   $("cmVehFields").classList.toggle("hide", mode === "edit");
   ["cmName","cmPhone","cmAddr","cmPlate","cmColor","cmModel"].forEach(id => $(id).value = "");
+  $("cmNewModel").classList.toggle("hide", ME.role === "kasir");
   if (mode === "new") {
     const raw = $("custQ").value.trim();
     if (/^[\d\s+-]{6,}$/.test(raw)) $("cmPhone").value = raw; else if (/^[A-Za-z]{1,2}\s*\d/.test(raw)) $("cmPlate").value = raw.toUpperCase(); else $("cmName").value = raw;
@@ -459,19 +469,20 @@ function openCustModal(mode) {
   setTimeout(() => $(mode === "vehicle" ? "cmPlate" : mode === "edit" ? (cust.phone ? "cmAddr" : "cmPhone") : "cmName").focus(), 50);
 }
 
-async function resolveModel(text) {
-  const t = text.trim().replace(/\s+/g, " ");
-  if (!t) return null;
-  const hit = carModels.find(m => (m.brand + " " + m.model).toLowerCase() === t.toLowerCase());
-  if (hit) return hit.id;
-  const sp = t.indexOf(" ");
-  if (sp < 0) throw new Error(`Tulis merk dan tipe, mis. "Toyota Avanza". "${t}" kurang lengkap.`);
-  const cap = s => s.replace(/\b\w/g, ch => ch.toUpperCase());
-  const { data, error } = await sb.from("car_models").insert({ brand: cap(t.slice(0, sp)), model: cap(t.slice(sp + 1)) }).select().single();
-  if (error) throw error;
-  carModels.push(data);
-  $("modelList").insertAdjacentHTML("beforeend", `<option value="${esc(data.brand + " " + data.model)}">`);
-  return data.id;
+function fillModels(sel) {
+  const brands = [...new Set(carModels.map(m => m.brand))].sort();
+  $("cmModel").innerHTML = `<option value="">— pilih mobil —</option>` + brands.map(b => `<optgroup label="${esc(b)}">` +
+    carModels.filter(m => m.brand === b).sort((x, y) => x.model.localeCompare(y.model))
+      .map(m => `<option value="${m.id}" ${m.id === sel ? "selected" : ""}>${esc(m.brand + " " + m.model)}</option>`).join("") + `</optgroup>`).join("");
+}
+// Only owner/admin can add a car model, so the list stays clean ("tyt avz" can't sneak in).
+async function newCarModel() {
+  const brand = prompt("Merk (mis. Toyota):"); if (!brand || !brand.trim()) return;
+  const model = prompt(`Tipe ${brand.trim()} (mis. Avanza):`); if (!model || !model.trim()) return;
+  const cap = t => t.trim().replace(/\s+/g, " ").replace(/\b\w/g, ch => ch.toUpperCase());
+  const { data, error } = await sb.from("car_models").insert({ brand: cap(brand), model: cap(model) }).select().single();
+  if (error) { $("cmErr").textContent = "Gagal tambah model: " + error.message; return; }
+  carModels.push(data); fillModels(data.id);
 }
 
 async function saveCustModal() {
@@ -480,7 +491,7 @@ async function saveCustModal() {
   const plate = $("cmPlate").value.trim().toUpperCase().replace(/\s+/g, " "), color = $("cmColor").value.trim();
   const need = [];
   if (cmMode !== "vehicle") { if (!name) need.push("nama"); if (!phone) need.push("no HP"); if (!addr) need.push("alamat"); }
-  if (cmMode !== "edit") { if (!plate) need.push("plat"); if (!color) need.push("warna"); }
+  if (cmMode !== "edit") { if (!plate) need.push("plat"); if (!color) need.push("warna"); if (!$("cmModel").value) need.push("mobil"); }
   if (need.length) { err.textContent = "Wajib diisi: " + need.join(", ") + ". Pelanggan yang tidak mau memberi data: isi \"-\"."; return; }
   try {
     $("cmSave").disabled = true;
@@ -501,7 +512,7 @@ async function saveCustModal() {
     }
     let vid = vehicleId;
     if (cmMode !== "edit") {
-      const modelId = await resolveModel($("cmModel").value);
+      const modelId = Number($("cmModel").value);
       const v = await sb.from("vehicles").insert({ customer_id: c.id, plate, car_model_id: modelId, color }).select().single();
       if (v.error) throw v.error;
       vid = v.data.id;

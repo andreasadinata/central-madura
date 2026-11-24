@@ -30,6 +30,7 @@
     <input id="pass" type="password" placeholder="Password" autocomplete="current-password">
     <button class="primary" id="loginBtn">Masuk</button>
     <div class="err" id="loginErr"></div>
+    <button class="link forgot" id="forgotBtn">Lupa password?</button>
   </div>
 </div>
 
@@ -42,6 +43,8 @@
   </div>
   <div class="tabs">
     <button id="t-produk" onclick="tab('produk')">Produk & harga</button>
+    <button id="t-pembelian" onclick="tab('pembelian')">Pembelian</button>
+    <button id="t-opname" onclick="tab('opname')">Stok opname</button>
     <button id="t-pelanggan" onclick="tab('pelanggan')">Pelanggan</button>
     <button id="t-tinjauan" onclick="tab('tinjauan')">Tinjauan harian</button>
     <button id="t-rekening" onclick="tab('rekening')">Rekening bank</button>
@@ -51,17 +54,52 @@
   <!-- PRODUK -->
   <div class="page hide" id="p-produk">
     <div class="bar">
-      <input id="pq" placeholder="Cari nama / SKU / barcode…" oninput="renderProducts()">
+      <div class="seg2" style="width:200px"><button id="kindB" class="on" onclick="setKind('barang')">Barang</button><button id="kindJ" onclick="setKind('jasa')">Jasa</button></div>
       <select id="pcat" style="max-width:200px" onchange="renderProducts()"></select>
-      <label class="row small" style="margin:0"><input type="checkbox" id="pinactive" style="width:auto" onchange="renderProducts()"> tampilkan nonaktif</label>
+      <input id="pq" placeholder="Cari nama / SKU / barcode…" oninput="renderProducts()">
+      <label class="row small" style="margin:0"><input type="checkbox" id="pinactive" style="width:auto" onchange="renderProducts()"> nonaktif</label>
       <span class="grow"></span>
-      <span class="small muted" title="Daftar harga = satu set harga khusus untuk pelanggan tertentu. Isi harganya di tiap produk (klik produk). Lalu pasang daftar itu ke pelanggannya di tab Pelanggan.">Daftar harga ⓘ:</span> <span id="plists"></span>
-      <button onclick="newPriceList()">+ Daftar harga</button>
       <button class="primary" onclick="editProduct(null)">+ Produk baru</button>
     </div>
+    <div class="bar">
+      <span class="small muted">Tampilkan harga:</span>
+      <div class="seg2" id="plists"></div>
+      <button class="small" onclick="newPriceList()">+ Daftar harga</button>
+      <span class="small muted">Daftar harga = set harga khusus untuk pelanggan tertentu (mis. PT tempo). Isi harganya di tiap produk, lalu pasang ke pelanggan di tab Pelanggan.</span>
+    </div>
     <div class="panel"><table>
-      <thead><tr><th>SKU</th><th>Nama</th><th>Kategori</th><th>Harga umum</th><th class="num">Stok</th></tr></thead>
+      <thead id="phead"></thead>
       <tbody id="ptable"></tbody></table></div>
+  </div>
+
+  <!-- PEMBELIAN -->
+  <div class="page hide" id="p-pembelian">
+    <div class="bar">
+      <span class="small muted">Pembelian tidak bisa diubah. Salah input? Buka pembeliannya → <b>Buat koreksi</b> (tanggal terima ikut yang asli).</span>
+      <span class="grow"></span>
+      <button onclick="openSuppliers()">Supplier</button>
+      <button class="primary" onclick="openPurchase(null)">+ Pembelian</button>
+    </div>
+    <div class="panel"><table>
+      <thead><tr><th>No</th><th>Tgl terima</th><th>Supplier</th><th>No nota supplier</th><th>Diinput</th><th class="num">Total</th></tr></thead>
+      <tbody id="putable"></tbody></table></div>
+  </div>
+
+  <!-- OPNAME -->
+  <div class="page hide" id="p-opname">
+    <div class="bar">
+      <select id="ocat" style="max-width:200px" onchange="renderOpname()"></select>
+      <input id="oq" placeholder="Cari barang…" oninput="renderOpname()">
+      <span class="grow"></span>
+      <input id="oreason" placeholder='Keterangan, mis. "Stock opname November"' style="max-width:320px">
+      <button class="primary" onclick="saveOpname()">Simpan penyesuaian</button>
+    </div>
+    <p class="small muted" style="margin-bottom:10px">Isi kolom <b>Fisik</b> hanya untuk barang yang dihitung. Selisih dicatat dengan harga pokok rata-rata dan muncul di Tinjauan harian. Kosong = tidak diubah.</p>
+    <div class="panel"><table>
+      <thead><tr><th>SKU</th><th>Barang</th><th class="num">Stok sistem</th><th style="width:120px">Fisik</th><th class="num">Selisih</th><th>Catatan</th></tr></thead>
+      <tbody id="otable"></tbody></table></div>
+    <div class="listhead">Penyesuaian terakhir</div>
+    <div class="panel"><table><thead><tr><th>No</th><th>Tanggal</th><th>Keterangan</th><th>Oleh</th><th class="num">Nilai selisih</th></tr></thead><tbody id="satable"></tbody></table></div>
   </div>
 
   <!-- PELANGGAN -->
@@ -107,7 +145,7 @@
     <header><h3 id="pmTitle">Produk</h3><button onclick="closeModal('prodModal')">Tutup</button></header>
     <div class="body">
       <div class="grid2">
-        <div class="field"><label>Kategori *</label><select id="pmCat" onchange="suggestSku()"></select></div>
+        <div class="field"><label>Jenis *</label><select id="pmService" onchange="pmKindChanged()"><option value="0">Barang (pakai stok)</option><option value="1">Jasa (tanpa stok)</option></select></div>
         <div class="field"><label>SKU *</label><input id="pmSku" style="text-transform:uppercase"></div>
       </div>
       <div class="field"><label>Nama *</label><input id="pmName"></div>
@@ -116,9 +154,10 @@
         <div class="field"><label>Barcode (scan di sini)</label><input id="pmBarcode"></div>
       </div>
       <div class="grid2">
-        <div class="field"><label>Jenis</label><select id="pmService"><option value="0">Barang (pakai stok)</option><option value="1">Jasa (tanpa stok)</option></select></div>
-        <div class="field"><label>Grup jasa (untuk laporan, mis. "Balancing")</label><input id="pmGroup"></div>
+        <div class="field" id="pmCatBox"><label>Kategori barang *</label><select id="pmCat" onchange="suggestSku()"></select></div>
+        <div class="field" id="pmGroupBox"><label>Grup jasa * (mis. "Balancing", untuk laporan & filter)</label><input id="pmGroup" list="groupList"></div>
       </div>
+      <datalist id="groupList"></datalist>
       <div class="grid2">
         <div class="field"><label>Dihitung untuk bonus</label><select id="pmBonus" onchange="$('pmPointsBox').classList.toggle('hide',this.value!=='ban')">
           <option value="">Tidak</option><option value="spooring">Target Spooring (qty)</option><option value="balancing">Target Balancing (qty)</option>
@@ -180,81 +219,182 @@
   </div>
 </div>
 
+<!-- PURCHASE MODAL -->
+<div class="overlay" id="puModal">
+  <div class="modal" style="width:820px">
+    <header><h3 id="puTitle">Pembelian baru</h3><button onclick="closeModal('puModal')">Tutup</button></header>
+    <div class="body">
+      <div id="puOrig" class="notice warn hide" style="margin-bottom:12px;font-size:13px"></div>
+      <div class="grid2" id="puHead">
+        <div class="field"><label>Supplier *</label><select id="puSup"></select></div>
+        <div class="grid2">
+          <div class="field"><label>Tanggal terima *</label><input type="date" id="puDate"></div>
+          <div class="field"><label>No nota supplier</label><input id="puRef"></div>
+        </div>
+      </div>
+      <div class="field hide" id="puReasonBox"><label>Alasan koreksi *</label><input id="puReason" placeholder="mis. kurang input 1 pcs, salah isi dus"></div>
+      <table class="tiers"><thead><tr><th>Barang</th><th style="width:90px">Qty (pcs)</th><th style="width:150px">Harga beli / pcs</th><th class="num" style="width:130px">Jumlah</th><th></th></tr></thead>
+        <tbody id="puLines"></tbody></table>
+      <datalist id="goodsList"></datalist>
+      <div class="row" style="justify-content:space-between;margin-top:8px"><button class="link small" onclick="addPuLine()">+ baris</button><b id="puTotal"></b></div>
+      <div class="err" id="puErr"></div>
+    </div>
+    <footer><button onclick="closeModal('puModal')">Batal</button><button class="primary" id="puSave" onclick="savePurchase()">Simpan pembelian</button></footer>
+  </div>
+</div>
+
+<div class="overlay" id="pdModal">
+  <div class="modal" style="width:720px">
+    <header><h3 id="pdTitle">Pembelian</h3><button onclick="closeModal('pdModal')">Tutup</button></header>
+    <div class="body" id="pdBody"></div>
+    <footer><button class="primary" onclick="openPurchase(currentPurchase)">Buat koreksi</button></footer>
+  </div>
+</div>
+
+<div class="overlay" id="supModal">
+  <div class="modal" style="width:720px">
+    <header><h3>Supplier</h3><button onclick="closeModal('supModal')">Tutup</button></header>
+    <div class="body">
+      <div class="grid2"><div class="field"><label>Nama *</label><input id="spName"></div><div class="field"><label>Telepon</label><input id="spPhone"></div></div>
+      <div class="grid2"><div class="field"><label>Alamat</label><input id="spAddr"></div><div class="field"><label>Email (opsional)</label><input id="spEmail"></div></div>
+      <div class="row" style="justify-content:flex-end;margin-bottom:12px"><button onclick="clearSupForm()">Kosongkan</button><button class="primary" onclick="saveSupplier()">Simpan supplier</button></div>
+      <div class="err" id="spErr"></div>
+      <table><thead><tr><th>Nama</th><th>Telepon</th><th>Alamat</th><th>Status</th></tr></thead><tbody id="sptable"></tbody></table>
+    </div>
+  </div>
+</div>
+
 <div id="toast"></div>
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="config.js"></script>
 <script src="common.js"></script>
 <script>
-let cats = [], products = [], tiers = {}, stock = {}, lists = [], locations = [];
-let defaultList = null;
+let cats = [], products = [], tiers = {}, stock = {}, lists = [], locations = [], stats = {}, lastCost = {}, suppliers = [];
+let defaultList = null, kind = "barang", showList = null, sortKey = "name", sortDir = 1;
 const todayJkt = () => new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Jakarta" });
 const closeModal = id => $(id).classList.remove("open");
+const TABS = ["produk", "pembelian", "opname", "pelanggan", "tinjauan", "rekening", "pengguna"];
 
 authGate(start, ["owner", "admin"]);
 
 async function start() {
-  $("who").textContent = ME.full_name + " · " + ME.role;
+  $("who").textContent = ME.full_name + " · " + ME.role + " · " + (ME.locations?.code || "");
   if (ME.role === "owner") $("t-pengguna").classList.remove("hide");
   $("rfrom").value = $("rto").value = todayJkt();
   try { await loadAll(); } catch (e) { toast("Gagal memuat: " + esc(errText(e)), "err"); return; }
-  tab(location.hash.slice(1) || "produk");
+  tab(TABS.includes(location.hash.slice(1)) ? location.hash.slice(1) : "produk");
 }
 
 function tab(name) {
-  ["produk", "pelanggan", "tinjauan", "rekening", "pengguna"].forEach(n => {
-    $("p-" + n).classList.toggle("hide", n !== name);
-    $("t-" + n).classList.toggle("on", n === name);
-  });
+  TABS.forEach(n => { $("p-" + n).classList.toggle("hide", n !== name); $("t-" + n).classList.toggle("on", n === name); });
   history.replaceState(null, "", "#" + name);
   if (name === "tinjauan") loadReview();
   if (name === "pengguna") loadUsers();
   if (name === "rekening") loadBanks();
+  if (name === "pembelian") loadPurchases();
+  if (name === "opname") { renderOpname(); loadAdjustments(); }
   if (name === "pelanggan" && !custRows.length) searchCustomers(true);
 }
 
 async function loadAll() {
-  const [c, p, t, s, l, loc] = await Promise.all([
+  const L = ME.location_id;
+  const [c, p, t, s, l, loc, st, lc, sp] = await Promise.all([
     sb.from("categories").select("*").order("sort"),
     fetchAll(() => sb.from("products").select("*").order("name")),
     fetchAll(() => sb.from("price_tiers").select("*").order("id")),
-    fetchAll(() => sb.from("product_stock").select("*").order("product_id")),
+    fetchAll(() => sb.from("product_stock").select("*").eq("location_id", L).order("product_id")),
     sb.from("price_lists").select("*").order("id"),
-    sb.from("locations").select("*").order("id")
+    sb.from("locations").select("*").order("id"),
+    fetchAll(() => sb.from("product_sales_stats").select("*").eq("location_id", L).order("product_id")),
+    fetchAll(() => sb.from("product_last_cost").select("*").eq("location_id", L).order("product_id")),
+    sb.from("suppliers").select("*").order("name")
   ]);
-  if (c.error) throw c.error; if (l.error) throw l.error; if (loc.error) throw loc.error;
-  cats = c.data; products = p; lists = l.data; locations = loc.data;
+  for (const r of [c, l, loc, sp]) if (r.error) throw r.error;
+  cats = c.data; products = p; lists = l.data; locations = loc.data; suppliers = sp.data;
   defaultList = (lists.find(x => x.is_default) || {}).id;
+  if (!showList) showList = defaultList;
   tiers = {}; t.forEach(r => (tiers[r.product_id] ||= []).push(r));
-  stock = {}; s.forEach(r => stock[r.product_id] = (stock[r.product_id] || 0) + Number(r.qty));
-  $("pcat").innerHTML = `<option value="">Semua kategori</option>` + cats.map(x => `<option value="${x.id}">${esc(x.name)}</option>`).join("");
+  stock = {}; s.forEach(r => stock[r.product_id] = Number(r.qty));
+  stats = {}; st.forEach(r => stats[r.product_id] = r);
+  lastCost = {}; lc.forEach(r => lastCost[r.product_id] = Number(r.unit_cost));
   $("pmCat").innerHTML = cats.map(x => `<option value="${x.id}">${esc(x.name)} (${x.code})</option>`).join("");
-  $("plists").innerHTML = lists.map(x => `<span class="chip">${esc(x.name)}${x.is_default ? " ★" : ""}</span>`).join(" ");
-  renderProducts();
+  $("ocat").innerHTML = `<option value="">Semua kategori</option>` + cats.map(x => `<option value="${x.id}">${esc(x.name)}</option>`).join("");
+  $("groupList").innerHTML = [...new Set(products.filter(x => x.service_group).map(x => x.service_group))].sort().map(g => `<option value="${esc(g)}">`).join("");
+  $("goodsList").innerHTML = products.filter(x => !x.is_service && x.is_active).map(x => `<option value="${esc(x.sku + " · " + x.name)}">`).join("");
+  renderListToggle(); setKind(kind);
 }
 
 // ═══════════ PRODUCTS ═══════════
 const tierSummary = (pid, lid) => (tiers[pid] || []).filter(t => t.price_list_id === lid)
   .sort((a, b) => a.min_qty - b.min_qty).map(t => `${num(t.min_qty)}+ : ${num(t.price)}`).join(" · ");
+const catName = id => (cats.find(c => c.id === id) || {}).name || "";
+
+function renderListToggle() {
+  $("plists").innerHTML = lists.map(x => `<button class="${x.id === showList ? "on" : ""}" onclick="showList=${x.id};renderListToggle();renderProducts()">${esc(x.name)}</button>`).join("");
+}
+
+function setKind(k) {
+  kind = k;
+  $("kindB").classList.toggle("on", k === "barang"); $("kindJ").classList.toggle("on", k === "jasa");
+  const prev = $("pcat").value;
+  $("pcat").innerHTML = k === "barang"
+    ? `<option value="">Semua kategori</option>` + cats.map(x => `<option value="c${x.id}">${esc(x.name)}</option>`).join("")
+    : `<option value="">Semua grup jasa</option>` + [...new Set(products.filter(x => x.is_service && x.service_group).map(x => x.service_group))].sort()
+        .map(g => `<option value="g${esc(g)}">${esc(g)}</option>`).join("");
+  if ([...$("pcat").options].some(o => o.value === prev)) $("pcat").value = prev;
+  renderProducts();
+}
+
+function sortBy(k) { sortDir = sortKey === k ? -sortDir : (k === "name" || k === "sku" ? 1 : -1); sortKey = k; renderProducts(); }
 
 function renderProducts() {
-  const term = $("pq").value.trim().toLowerCase(), cat = Number($("pcat").value) || null, showOff = $("pinactive").checked;
-  const list = products.filter(p => (showOff || p.is_active) && (!cat || p.category_id === cat) &&
-    (!term || (p.name + " " + p.sku + " " + (p.barcode || "")).toLowerCase().includes(term))).slice(0, 300);
-  $("ptable").innerHTML = list.map(p => `<tr class="click ${p.is_active ? "" : "off"}" onclick="editProduct(${p.id})">
-    <td>${esc(p.sku)}</td><td>${esc(p.name)}${p.is_active ? "" : " (nonaktif)"}</td>
-    <td>${esc((cats.find(c => c.id === p.category_id) || {}).name)}</td>
-    <td>${tierSummary(p.id, defaultList) || '<span style="color:var(--red)">belum ada harga</span>'}</td>
-    <td class="num">${p.is_service ? "jasa" : num(stock[p.id] || 0)}</td></tr>`).join("")
-    || `<tr><td colspan="5" class="muted">Tidak ada produk.</td></tr>`;
+  const term = $("pq").value.trim().toLowerCase(), f = $("pcat").value, showOff = $("pinactive").checked;
+  const isJ = kind === "jasa";
+  const price1 = pid => { const r = (tiers[pid] || []).filter(t => t.price_list_id === showList && Number(t.min_qty) === 1)[0]; return r ? Number(r.price) : null; };
+  const val = (p, k) => ({ name: p.name, sku: p.sku, price: price1(p.id) ?? -1, stock: stock[p.id] || 0,
+    total: Number(stats[p.id]?.sold_total || 0), avg3: Number(stats[p.id]?.avg_3_months || 0),
+    last: Number(stats[p.id]?.sold_last_month || 0), cost: lastCost[p.id] ?? -1, group: p.service_group || "" })[k];
+  let list = products.filter(p => p.is_service === isJ && (showOff || p.is_active) &&
+    (!f || (f[0] === "c" ? p.category_id === Number(f.slice(1)) : p.service_group === f.slice(1))) &&
+    (!term || (p.name + " " + p.sku + " " + (p.barcode || "") + " " + (p.brand || "")).toLowerCase().includes(term)));
+  list.sort((a, b) => { const x = val(a, sortKey), y = val(b, sortKey); return (x > y ? 1 : x < y ? -1 : 0) * sortDir; });
+  list = list.slice(0, 400);
+  const lname = (lists.find(l => l.id === showList) || {}).name;
+  const cols = isJ
+    ? [["sku","SKU"],["name","Jasa"],["group","Grup"],["price","Harga " + lname],["total","Total terjual"],["avg3","Rata² 3 bln"],["last","Bulan lalu"]]
+    : [["sku","SKU"],["name","Barang"],["price","Harga " + lname],["cost","Harga beli terakhir"],["stock","Stok"],["total","Total terjual"],["avg3","Rata² 3 bln"],["last","Bulan lalu"]];
+  const numCols = ["price","cost","stock","total","avg3","last"];
+  $("phead").innerHTML = "<tr>" + cols.map(([k, l]) => `<th class="sort ${sortKey === k ? "on" : ""} ${numCols.includes(k) ? "num" : ""}" onclick="sortBy('${k}')">${esc(l)}${sortKey === k ? (sortDir > 0 ? " ↑" : " ↓") : ""}</th>`).join("") + "</tr>";
+  $("ptable").innerHTML = list.map(p => {
+    const pr = (tiers[p.id] || []).some(t => t.price_list_id === showList)
+      ? tierSummary(p.id, showList)
+      : showList === defaultList ? '<span style="color:var(--red)">belum ada harga</span>' : `<span class="muted">pakai Umum: ${tierSummary(p.id, defaultList)}</span>`;
+    const st = stats[p.id], qty = n => n ? num(n) + " pcs" : "—";
+    const cells = isJ
+      ? [esc(p.sku), `<b>${esc(p.name)}</b>${p.is_active ? "" : " (nonaktif)"}`, esc(p.service_group || ""), pr, qty(st?.sold_total), qty(st?.avg_3_months), qty(st?.sold_last_month)]
+      : [esc(p.sku), `<b>${esc(p.name)}</b>${p.is_active ? "" : " (nonaktif)"}<div class="tiny muted">${esc(catName(p.category_id))}${p.brand ? " · " + esc(p.brand) : ""}${p.isi_per_dus ? " · isi " + p.isi_per_dus + "/dus" : ""}</div>`,
+         pr, lastCost[p.id] != null ? num(lastCost[p.id]) : "—",
+         `<span style="${(stock[p.id] || 0) < 0 ? "color:var(--red);font-weight:600" : ""}">${num(stock[p.id] || 0)} pcs</span>`, qty(st?.sold_total), qty(st?.avg_3_months), qty(st?.sold_last_month)];
+    return `<tr class="click ${p.is_active ? "" : "off"}" onclick="editProduct(${p.id})">` +
+      cells.map((c, i) => `<td class="${numCols.includes(cols[i][0]) ? "num" : ""}">${c}</td>`).join("") + "</tr>";
+  }).join("") || `<tr><td colspan="${cols.length}" class="muted">Tidak ada ${isJ ? "jasa" : "barang"}.</td></tr>`;
+}
+
+function pmKindChanged() {
+  const j = $("pmService").value === "1";
+  $("pmCatBox").classList.toggle("hide", j); $("pmGroupBox").classList.toggle("hide", !j);
+  $("pmDus").closest(".field").classList.toggle("hide", j);
+  suggestSku();
 }
 
 let editingProduct = null, draftTiers = {};
 function editProduct(id) {
   editingProduct = id ? products.find(p => p.id === id) : null;
-  const p = editingProduct || { category_id: cats[0].id, is_service: false, is_active: true };
+  const p = editingProduct || { category_id: (cats.find(c => "c" + c.id === $("pcat").value) || cats[0]).id, is_service: kind === "jasa", is_active: true,
+    service_group: kind === "jasa" && $("pcat").value[0] === "g" ? $("pcat").value.slice(1) : "" };
   $("pmTitle").textContent = id ? "Ubah produk" : "Produk baru";
-  $("pmCat").value = p.category_id; $("pmSku").value = p.sku || "";
+  $("pmCat").value = p.category_id || cats[0].id; $("pmSku").value = p.sku || "";
   $("pmName").value = p.name || ""; $("pmBrand").value = p.brand || ""; $("pmBarcode").value = p.barcode || "";
   $("pmService").value = p.is_service ? "1" : "0"; $("pmGroup").value = p.service_group || "";
   $("pmDus").value = p.isi_per_dus || ""; $("pmActive").value = p.is_active ? "1" : "0";
@@ -262,10 +402,12 @@ function editProduct(id) {
   $("pmPointsBox").classList.toggle("hide", $("pmBonus").value !== "ban");
   $("pmSku").disabled = !!id;   // SKU never changes once used
   $("pmDelete").classList.toggle("hide", !id);
+  $("pmService").disabled = !!id;   // goods ↔ service can't flip once created (stock history)
+  pmKindChanged();
   draftTiers = {};
   lists.forEach(l => draftTiers[l.id] = (tiers[id] || []).filter(t => t.price_list_id === l.id)
     .sort((a, b) => a.min_qty - b.min_qty).map(t => ({ id: t.id, min_qty: Number(t.min_qty), price: Number(t.price) })));
-  if (!id) { draftTiers[defaultList] = [{ min_qty: 1, price: 0 }]; suggestSku(); }
+  if (!id) draftTiers[defaultList] = [{ min_qty: 1, price: 0 }];
   renderTiers();
   $("pmErr").textContent = "";
   $("prodModal").classList.add("open");
@@ -273,7 +415,7 @@ function editProduct(id) {
 
 function suggestSku() {
   if (editingProduct) return;
-  const c = cats.find(x => x.id === Number($("pmCat").value));
+  const c = $("pmService").value === "1" ? { code: "JS" } : cats.find(x => x.id === Number($("pmCat").value));
   const max = products.map(p => p.sku).filter(s => s.startsWith(c.code + "-"))
     .map(s => parseInt(s.slice(c.code.length + 1)) || 0).reduce((a, b) => Math.max(a, b), 0);
   $("pmSku").value = c.code + "-" + String(max + 1).padStart(4, "0");
@@ -298,14 +440,16 @@ function addTier(lid) {
 async function saveProduct() {
   const err = $("pmErr"); err.textContent = "";
   const row = {
-    category_id: Number($("pmCat").value), name: $("pmName").value.trim(),
+    category_id: $("pmService").value === "1" ? null : Number($("pmCat").value), name: $("pmName").value.trim(),
     brand: $("pmBrand").value.trim() || null, barcode: $("pmBarcode").value.trim() || null,
     is_service: $("pmService").value === "1", service_group: $("pmGroup").value.trim() || null,
-    isi_per_dus: parseInt($("pmDus").value) || null, is_active: $("pmActive").value === "1",
+    isi_per_dus: $("pmService").value === "1" ? null : parseInt($("pmDus").value) || null, is_active: $("pmActive").value === "1",
     bonus_type: $("pmBonus").value || null,
     bonus_points: $("pmBonus").value === "ban" && $("pmPoints").value !== "" ? Number($("pmPoints").value.replace(",", ".")) : null
   };
   if (!row.name) { err.textContent = "Nama wajib diisi."; return; }
+  if (row.is_service && !row.service_group) { err.textContent = "Grup jasa wajib diisi (mis. Balancing, Spooring, Lain-lain)."; return; }
+  if (!row.is_service) row.service_group = null;
   for (const l of lists) {
     const rows = draftTiers[l.id];
     if (rows.some(r => !(r.min_qty > 0) || !(r.price >= 0))) { err.textContent = `Daftar ${l.name}: qty harus > 0 dan harga ≥ 0.`; return; }
@@ -358,6 +502,179 @@ async function deleteProduct() {
   const { error } = await sb.rpc("delete_product", { p_product: editingProduct.id });
   if (error) { $("pmErr").textContent = error.message; return; }
   closeModal("prodModal"); toast("Produk dihapus."); await loadAll();
+}
+
+// ═══════════ PURCHASES ═══════════
+let currentPurchase = null, puLines = [], puCorrects = null;
+const goodsById = id => products.find(p => p.id === id);
+const goodsByLabel = txt => products.find(p => !p.is_service && (p.sku + " · " + p.name) === txt.trim()) ||
+  products.find(p => !p.is_service && (p.sku.toUpperCase() === txt.trim().toUpperCase() || (p.barcode && p.barcode === txt.trim())));
+
+async function loadPurchases() {
+  const { data, error } = await sb.from("purchases").select("*, suppliers(name), corr:purchases!purchases_corrects_id_fkey(doc_no)")
+    .eq("location_id", ME.location_id).order("id", { ascending: false }).limit(200);
+  if (error) { $("putable").innerHTML = `<tr><td colspan="6" class="err">${esc(error.message)}</td></tr>`; return; }
+  $("putable").innerHTML = data.map(x => `<tr class="click" onclick="showPurchase(${x.id})">
+    <td><b>${x.doc_no}</b>${x.corrects_id ? ` <span class="badge b-open">koreksi ${esc(x.corr?.doc_no || "")}</span>` : ""}</td>
+    <td>${x.received_date}</td><td>${esc(x.suppliers?.name)}</td><td>${esc(x.supplier_ref || "")}</td>
+    <td class="small">${new Date(x.entered_at).toLocaleString("id-ID", { timeZone: "Asia/Jakarta" })}</td><td class="num">${num(x.total)}</td></tr>`).join("")
+    || `<tr><td colspan="6" class="muted">Belum ada pembelian.</td></tr>`;
+}
+
+async function showPurchase(id) {
+  const { data: x, error } = await sb.from("purchases").select("*, suppliers(name), purchase_items(*, products(sku,name)), creator:profiles!purchases_created_by_fkey(full_name)").eq("id", id).single();
+  if (error) { toast(esc(error.message), "err"); return; }
+  const { data: kids } = await sb.from("purchases").select("doc_no, reason, total").eq("corrects_id", id);
+  currentPurchase = x;
+  $("pdTitle").textContent = x.doc_no;
+  $("pdBody").innerHTML = `<p class="small" style="margin-bottom:10px">${esc(x.suppliers.name)} · terima <b>${x.received_date}</b> · nota ${esc(x.supplier_ref || "-")} · diinput ${new Date(x.entered_at).toLocaleString("id-ID", { timeZone: "Asia/Jakarta" })} oleh ${esc(x.creator?.full_name || "")}${x.reason ? `<br>Alasan koreksi: ${esc(x.reason)}` : ""}</p>
+    <table><thead><tr><th>Barang</th><th class="num">Qty</th><th class="num">Harga/pcs</th><th class="num">Jumlah</th></tr></thead><tbody>
+    ${x.purchase_items.map(i => `<tr><td>${esc(i.products.sku)} · ${esc(i.products.name)}</td><td class="num">${num(i.qty)}</td><td class="num">${num(i.unit_cost)}</td><td class="num">${num(i.line_total)}</td></tr>`).join("")}
+    <tr><td colspan="3"><b>Total</b></td><td class="num"><b>${num(x.total)}</b></td></tr></tbody></table>
+    ${kids && kids.length ? `<div class="listhead">Koreksi untuk pembelian ini</div>` + kids.map(k => `<div class="small">${k.doc_no}: ${num(k.total)} — ${esc(k.reason)}</div>`).join("") : ""}`;
+  $("pdModal").classList.add("open");
+}
+
+function openPurchase(orig) {
+  puCorrects = orig;
+  closeModal("pdModal");
+  $("puTitle").textContent = orig ? "Koreksi " + orig.doc_no : "Pembelian baru";
+  $("puOrig").classList.toggle("hide", !orig);
+  if (orig) $("puOrig").innerHTML = `Koreksi untuk <b>${orig.doc_no}</b> (terima ${orig.received_date}, ${esc(orig.suppliers.name)}). Tanggal terima ikut yang asli. Isi hanya <b>selisihnya</b>: kurang input 1 pcs → qty <b>1</b>; kelebihan 2 pcs → qty <b>-2</b>; harga salah → baris minus harga lama + baris plus harga benar.`;
+  $("puHead").classList.toggle("hide", !!orig);
+  $("puReasonBox").classList.toggle("hide", !orig);
+  $("puSup").innerHTML = `<option value="">— pilih —</option>` + suppliers.filter(x => x.is_active).map(x => `<option value="${x.id}">${esc(x.name)}</option>`).join("");
+  $("puDate").value = todayJkt(); $("puDate").max = todayJkt(); $("puRef").value = ""; $("puReason").value = "";
+  puLines = [{ label: "", qty: "", cost: "" }];
+  renderPuLines();
+  $("puErr").textContent = "";
+  $("puModal").classList.add("open");
+}
+
+function addPuLine() { puLines.push({ label: "", qty: "", cost: "" }); renderPuLines(); }
+
+function renderPuLines() {
+  $("puLines").innerHTML = puLines.map((l, i) => `<tr>
+    <td><input list="goodsList" value="${esc(l.label)}" placeholder="ketik / scan barang" onchange="puLines[${i}].label=this.value;renderPuLines()"><div class="tiny" id="puHint${i}"></div></td>
+    <td><input inputmode="decimal" value="${l.qty}" oninput="puLines[${i}].qty=this.value;puCalc()"></td>
+    <td><input inputmode="numeric" value="${l.cost === "" ? "" : num(l.cost)}" oninput="this.value=this.value.trim()==='-'?'-':num(parseRp(this.value));puLines[${i}].cost=parseRp(this.value);puCalc()"></td>
+    <td class="num" id="puLt${i}"></td>
+    <td>${puLines.length > 1 ? `<button class="link danger" onclick="puLines.splice(${i},1);renderPuLines()">×</button>` : ""}</td></tr>`).join("");
+  puCalc();
+}
+
+function puCalc() {
+  let tot = 0;
+  puLines.forEach((l, i) => {
+    const p = l.label ? goodsByLabel(l.label) : null, q = Number(String(l.qty).replace(",", ".")) || 0, c = Number(l.cost) || 0;
+    tot += q * c;
+    $("puLt" + i).textContent = q && c ? num(q * c) : "";
+    const h = $("puHint" + i); if (!h) return;
+    if (l.label && !p) { h.innerHTML = '<span style="color:var(--red)">barang tidak ditemukan — pilih dari daftar</span>'; return; }
+    if (!p) { h.textContent = ""; return; }
+    const last = lastCost[p.id], bits = [`stok ${num(stock[p.id] || 0)}`];
+    if (p.isi_per_dus) bits.push(`isi ${p.isi_per_dus}/dus — qty dalam PCS`);
+    if (last) bits.push(`beli terakhir ${num(last)}/pcs`);
+    let warn = "";
+    if (last && c && (c < last * 0.6 || c > last * 1.6)) warn = ` <b style="color:var(--red)">⚠ harga ${num(c)} jauh dari biasanya (${num(last)}). Salah isi dus?</b>`;
+    h.innerHTML = `<span class="muted">${bits.join(" · ")}</span>${warn}`;
+  });
+  $("puTotal").textContent = "Total " + rp(tot);
+}
+
+async function savePurchase() {
+  const err = $("puErr"); err.textContent = "";
+  const items = [];
+  for (const [i, l] of puLines.entries()) {
+    if (!l.label && !l.qty && !l.cost) continue;
+    const p = goodsByLabel(l.label);
+    if (!p) { err.textContent = `Baris ${i + 1}: pilih barang dari daftar.`; return; }
+    const q = Number(String(l.qty).replace(",", "."));
+    if (!q) { err.textContent = `Baris ${i + 1} (${p.name}): qty wajib, tidak boleh 0.`; return; }
+    if (q < 0 && !puCorrects) { err.textContent = `Baris ${i + 1}: qty minus hanya untuk koreksi.`; return; }
+    if (l.cost === "" || l.cost === null) { err.textContent = `Baris ${i + 1} (${p.name}): harga beli wajib.`; return; }
+    items.push({ product_id: p.id, qty: q, unit_cost: Number(l.cost) });
+  }
+  if (!items.length) { err.textContent = "Belum ada barang."; return; }
+  const args = puCorrects
+    ? { p_supplier: puCorrects.supplier_id, p_received: puCorrects.received_date, p_items: items, p_corrects: puCorrects.id, p_reason: $("puReason").value }
+    : { p_supplier: Number($("puSup").value) || null, p_received: $("puDate").value, p_items: items, p_supplier_ref: $("puRef").value };
+  if (!puCorrects && !args.p_supplier) { err.textContent = "Pilih supplier."; return; }
+  $("puSave").disabled = true;
+  const { data, error } = await sb.rpc("create_purchase", args);
+  $("puSave").disabled = false;
+  if (error) { err.textContent = "Gagal simpan: " + error.message; return; }
+  closeModal("puModal");
+  toast(`Tersimpan · <b>${data.doc_no}</b> · ${rp(data.total)}`);
+  await loadAll(); loadPurchases();
+}
+
+// suppliers
+let editingSup = null;
+function openSuppliers() { clearSupForm(); renderSuppliers(); $("supModal").classList.add("open"); }
+function renderSuppliers() {
+  $("sptable").innerHTML = suppliers.map(x => `<tr class="click ${x.is_active ? "" : "off"}" onclick="editSup(${x.id})"><td><b>${esc(x.name)}</b></td><td>${esc(x.phone || "")}</td><td>${esc(x.address || "")}</td><td>${x.is_active ? "Aktif" : "Nonaktif"}</td></tr>`).join("");
+}
+function clearSupForm() { editingSup = null; ["spName","spPhone","spAddr","spEmail"].forEach(i => $(i).value = ""); $("spErr").textContent = ""; }
+function editSup(id) {
+  const x = suppliers.find(y => y.id === id); editingSup = x;
+  $("spName").value = x.name; $("spPhone").value = x.phone || ""; $("spAddr").value = x.address || ""; $("spEmail").value = x.email || "";
+  if (!x.is_active && confirm(`${x.name} nonaktif. Aktifkan lagi?`)) x._reactivate = true;
+  else if (x.is_active && confirm(`Nonaktifkan ${x.name}? (Batal = hanya ubah data)`)) x._deactivate = true;
+}
+async function saveSupplier() {
+  const row = { name: $("spName").value.trim(), phone: $("spPhone").value.trim() || null, address: $("spAddr").value.trim() || null, email: $("spEmail").value.trim() || null };
+  if (!row.name) { $("spErr").textContent = "Nama wajib diisi."; return; }
+  if (editingSup?._reactivate) row.is_active = true;
+  if (editingSup?._deactivate) row.is_active = false;
+  const r = editingSup ? await sb.from("suppliers").update(row).eq("id", editingSup.id) : await sb.from("suppliers").insert(row);
+  if (r.error) { $("spErr").textContent = r.error.message; return; }
+  const { data } = await sb.from("suppliers").select("*").order("name"); suppliers = data || [];
+  clearSupForm(); renderSuppliers(); toast("Supplier tersimpan.");
+}
+
+// ═══════════ STOCK COUNT (OPNAME) ═══════════
+let opCounts = {};
+function renderOpname() {
+  const term = $("oq").value.trim().toLowerCase(), cat = Number($("ocat").value) || null;
+  const list = products.filter(p => !p.is_service && p.is_active && (!cat || p.category_id === cat) &&
+    (!term || (p.name + " " + p.sku + " " + (p.barcode || "")).toLowerCase().includes(term))).slice(0, 400);
+  $("otable").innerHTML = list.map(p => {
+    const c = opCounts[p.id], sys = stock[p.id] || 0, d = c && c.qty !== "" ? Number(c.qty) - sys : null;
+    return `<tr><td>${esc(p.sku)}</td><td>${esc(p.name)}</td><td class="num">${num(sys)}</td>
+      <td><input inputmode="decimal" value="${c ? esc(c.qty) : ""}" oninput="(opCounts[${p.id}] ||= {qty:'',note:''}).qty=this.value;opDiff(${p.id})"></td>
+      <td class="num" id="od${p.id}" style="${d ? "font-weight:600;color:" + (d < 0 ? "var(--red)" : "var(--green)") : ""}">${d === null ? "" : (d > 0 ? "+" : "") + num(d)}</td>
+      <td><input value="${c ? esc(c.note) : ""}" placeholder="opsional" oninput="(opCounts[${p.id}] ||= {qty:'',note:''}).note=this.value"></td></tr>`;
+  }).join("") || `<tr><td colspan="6" class="muted">Tidak ada barang.</td></tr>`;
+}
+function opDiff(pid) {
+  const c = opCounts[pid], el = $("od" + pid), d = c.qty === "" ? null : Number(String(c.qty).replace(",", ".")) - (stock[pid] || 0);
+  el.textContent = d === null || isNaN(d) ? "" : (d > 0 ? "+" : "") + num(d);
+  el.style.color = d < 0 ? "var(--red)" : d > 0 ? "var(--green)" : ""; el.style.fontWeight = d ? "600" : "";
+}
+async function saveOpname() {
+  const items = Object.entries(opCounts).filter(([, c]) => String(c.qty).trim() !== "")
+    .map(([pid, c]) => ({ product_id: Number(pid), counted_qty: Number(String(c.qty).replace(",", ".")), note: c.note || "" }));
+  if (!items.length) { toast("Belum ada hitungan fisik yang diisi.", "err"); return; }
+  if (items.some(i => isNaN(i.counted_qty) || i.counted_qty < 0)) { toast("Hitungan fisik harus angka ≥ 0.", "err"); return; }
+  const reason = $("oreason").value.trim();
+  if (!reason) { toast('Isi keterangan dulu, mis. "Stock opname November".', "err"); $("oreason").focus(); return; }
+  const changed = items.filter(i => i.counted_qty !== (stock[i.product_id] || 0)).length;
+  if (!confirm(`Simpan hitungan ${items.length} barang (${changed} berubah)?`)) return;
+  const { data, error } = await sb.rpc("create_stock_adjustment", { p_reason: reason, p_items: items });
+  if (error) { toast(esc(error.message), "err"); return; }
+  opCounts = {}; $("oreason").value = "";
+  toast(`Tersimpan · <b>${data.doc_no}</b>`);
+  await loadAll(); renderOpname(); loadAdjustments();
+}
+async function loadAdjustments() {
+  const { data, error } = await sb.from("stock_adjustments").select("*, stock_adjustment_items(diff, unit_cost), creator:profiles!stock_adjustments_created_by_fkey(full_name)")
+    .eq("location_id", ME.location_id).order("id", { ascending: false }).limit(30);
+  if (error) { $("satable").innerHTML = `<tr><td colspan="5" class="err">${esc(error.message)}</td></tr>`; return; }
+  $("satable").innerHTML = data.map(a => `<tr><td>${a.doc_no}</td><td class="small">${new Date(a.created_at).toLocaleString("id-ID", { timeZone: "Asia/Jakarta" })}</td>
+    <td>${esc(a.reason)}</td><td>${esc(a.creator?.full_name || "")}</td>
+    <td class="num">${num(a.stock_adjustment_items.reduce((s, i) => s + Number(i.diff) * Number(i.unit_cost || 0), 0))}</td></tr>`).join("")
+    || `<tr><td colspan="5" class="muted">Belum ada.</td></tr>`;
 }
 
 async function loadBanks() {
@@ -465,7 +782,9 @@ async function saveCustomer() {
 
 // ═══════════ REVIEW ═══════════
 async function loadReview() {
-  const { data, error } = await sb.rpc("review_list", { p_from: $("rfrom").value, p_to: $("rto").value });
+  const args = { p_from: $("rfrom").value, p_to: $("rto").value };
+  const [a, b] = await Promise.all([sb.rpc("review_list", args), sb.rpc("review_extra", args)]);
+  const error = a.error || b.error, data = error ? null : (a.data || []).concat(b.data || []).sort((x, y) => (y.at || "9") > (x.at || "9") ? 1 : -1);
   if (error) { $("rtable").innerHTML = `<tr><td colspan="6" class="err">${esc(error.message)}</td></tr>`; return; }
   $("rtable").innerHTML = data.map(r => `<tr><td class="small">${r.at ? new Date(r.at).toLocaleString("id-ID", { timeZone: "Asia/Jakarta" }) : ""}</td>
     <td><b>${esc(r.kind)}</b></td><td>${esc(r.invoice || "")}</td><td>${esc(r.who || "")}</td><td>${esc(r.detail)}</td>

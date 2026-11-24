@@ -85,3 +85,12 @@ th{font-size:11px;font-weight:600;color:var(--muted);text-transform:uppercase;le
   padding:8px 10px;border-bottom:1px solid var(--border);background:var(--page)}
 td{padding:9px 10px;border-bottom:1px solid var(--border);vertical-align:top}
 tr.click{cursor:pointer} tr.click:hover td{background:#fafafb}
+
+/* segmented toggle (shared) */
+.seg2{display:flex;gap:0}
+.seg2 button{flex:1;border-radius:0;padding:6px 12px;font-size:12px}
+.seg2 button:first-child{border-radius:var(--r) 0 0 var(--r)} .seg2 button:last-child{border-radius:0 var(--r) var(--r) 0}
+.seg2 button.on{background:var(--accent-soft);border-color:var(--accent);color:var(--accent-ink);font-weight:600}
+th.sort{cursor:pointer;user-select:none} th.sort:hover{color:var(--text)}
+th.sort.on{color:var(--accent)}
+.forgot{display:block;text-align:center;margin-top:12px;font-size:13px}
