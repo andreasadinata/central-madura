@@ -1,7 +1,11 @@
 -- Starting data. Safe to read; run once after 001.
 
 insert into locations (code, name) values
-  ('CBP', 'Central Ban Pamekasan');
+  ('CBP',  'Central Ban Pamekasan'),
+  ('CS',   'Central Speed'),
+  ('CA',   'Central Auto'),
+  ('CBS',  'Central Ban Sumenep'),
+  ('TOKO', 'Toko Ban/Oli');
 
 -- Categories = the same list as the queue job tags, so the two systems agree.
 insert into categories (code, name, sort) values

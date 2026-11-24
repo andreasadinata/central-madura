@@ -7,7 +7,7 @@ Plain HTML + JavaScript + Supabase. No framework, no build step.
 | `index.html` | Cashier screen (kasir) |
 | `admin.html` | Products & prices, customers, daily review, users |
 | `common.js` / `style.css` / `config.js` | Shared helpers, design, public Supabase settings |
-| `sql/` | Database, run in order 000 → 004 |
+| `sql/` | Database, run in order 000 → 005 |
 | `supabase/functions/admin-users` | Creates staff logins. The only code that uses the service_role key, and it runs on Supabase's servers. |
 
 ## Rules the database enforces (not the browser)
