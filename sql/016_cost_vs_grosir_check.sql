@@ -1,0 +1,7 @@
+-- v11_cost_vs_grosir_check + v11b_cost_check_skip_tyres (applied 2026-11-25)
+-- Rule for oils/liquids/parts (NOT category BAN): when a product has >= 2 quantity tiers in the default
+-- (Umum) list, the highest-qty tier price must equal the purchase price.
+-- _grosir_tier(product) -> that tier (null for tyres / no tiers).
+-- review_cost_check(from, to) -> Tinjauan rows "Harga beli ≠ harga grosir" for every purchase line breaking it.
+-- The admin screens also warn: live hint + confirm popup on Pembelian, confirm popup on product save,
+-- and a "⚠ grosir ≠ harga beli" filter in Produk & harga.

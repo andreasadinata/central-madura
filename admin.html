@@ -75,6 +75,7 @@
       <select id="pcat" style="max-width:200px" onchange="renderProducts()"></select>
       <input id="pq" placeholder="Cari nama / SKU / barcode…" oninput="renderProducts()">
       <label class="row small" style="margin:0"><input type="checkbox" id="pinactive" style="width:auto" onchange="renderProducts()"> nonaktif</label>
+      <label class="row small" style="margin:0;color:var(--red)" title="Barang dengan harga bertingkat yang harga qty terbesarnya tidak sama dengan harga beli terakhir"><input type="checkbox" id="pmism" style="width:auto" onchange="renderProducts()"> ⚠ grosir ≠ harga beli <span id="pmismN"></span></label>
       <span class="grow"></span>
       <button class="primary owner-only" onclick="editProduct(null)">+ Produk baru</button>
     </div>
@@ -491,7 +492,11 @@ function renderProducts() {
   const val = (p, k) => ({ name: p.name, sku: p.sku, price: price1(p.id) ?? -1, stock: stock[p.id] || 0,
     total: Number(stats[p.id]?.sold_total || 0), avg3: Number(stats[p.id]?.avg_3_months || 0),
     last: Number(stats[p.id]?.sold_last_month || 0), cost: lastCost[p.id] ?? -1, group: p.service_group || "" })[k];
-  let list = products.filter(p => p.is_service === isJ && (showOff || p.is_active) &&
+  const mism = p => { const g = !p.is_service && grosirTier(p.id), c = lastCost[p.id]; return g && c != null && g.price !== c ? { g, c } : null; };
+  const nm = products.filter(p => p.is_active && mism(p)).length;
+  $("pmismN").textContent = nm ? `(${nm})` : "(0)";
+  const onlyMism = $("pmism").checked;
+  let list = products.filter(p => p.is_service === isJ && (showOff || p.is_active) && (!onlyMism || mism(p)) &&
     (!f || (f[0] === "c" ? p.category_id === Number(f.slice(1)) : p.service_group === f.slice(1))) &&
     (!term || (p.name + " " + p.sku + " " + (p.barcode || "") + " " + (p.brand || "")).toLowerCase().includes(term)));
   list.sort((a, b) => { const x = val(a, sortKey), y = val(b, sortKey); return (x > y ? 1 : x < y ? -1 : 0) * sortDir; });
@@ -510,7 +515,7 @@ function renderProducts() {
     const cells = isJ
       ? [esc(p.sku), `<b>${esc(p.name)}</b>${p.is_active ? "" : " (nonaktif)"}`, esc(p.service_group || ""), pr, qty(st?.sold_total), qty(st?.avg_3_months), qty(st?.sold_last_month)]
       : [esc(p.sku), `<b>${esc(p.name)}</b>${p.is_active ? "" : " (nonaktif)"}<div class="tiny muted">${esc(catName(p.category_id))}${p.brand ? " · " + esc(p.brand) : ""}${p.isi_per_dus ? " · isi " + p.isi_per_dus + "/dus" : ""}</div>`,
-         pr,
+         pr + ((m => m ? `<div class="tiny" style="color:var(--red);font-weight:600">⚠ ${m.g.min_qty}+ = ${num(m.g.price)}, beli terakhir ${num(m.c)}</div>` : "")(mism(p))),
          `<span style="${(stock[p.id] || 0) < 0 ? "color:var(--red);font-weight:600" : ""}">${num(stock[p.id] || 0)} pcs</span>`, qty(st?.sold_total), qty(st?.avg_3_months), qty(st?.sold_last_month)];
     return `<tr class="click ${p.is_active ? "" : "off"}" onclick="editProduct(${p.id})">` +
       cells.map((c, i) => `<td class="${numCols.includes(cols[i][0]) ? "num" : ""}">${c}</td>`).join("") + "</tr>";
@@ -597,6 +602,8 @@ async function saveProduct() {
   const def = draftTiers[defaultList];
   if (!def.some(r => r.min_qty === 1)) { err.textContent = "Harga Umum wajib punya tingkat mulai qty 1."; return; }
   if (def.some(r => r.price === 0) && !confirm("Ada harga Umum Rp 0. Benar?")) return;
+  const gt = !row.is_service && grosirTier(null, def, row.category_id), lc = editingProduct && lastCost[editingProduct.id];
+  if (gt && lc && gt.price !== lc && !confirm(`⚠ HARGA ${gt.min_qty}+ ≠ HARGA BELI\n\nHarga ${gt.min_qty}+ : ${num(gt.price)}\nHarga beli terakhir : ${num(lc)}\n\nUntuk oli/cairan dari Central Motor, keduanya harus SAMA.\nKalau harga dari Central Motor berubah, pastikan Pembelian berikutnya diisi harga baru.\n\nOK = tetap simpan · Batal = kembali`)) return;
 
   $("pmSave").disabled = true;
   try {
@@ -764,6 +771,15 @@ function openPurchase(orig) {
   $("puModal").classList.add("open");
 }
 
+// Rule (oils etc., not tyres): if a product has quantity tiers in the Umum list, the highest-qty tier price
+// (the price other shops pay) must equal the purchase price. Returns that tier, or null when no tiers.
+function grosirTier(pid, rows, catId) {
+  const cat = cats.find(c => c.id === (catId !== undefined ? catId : (products.find(x => x.id === pid) || {}).category_id));
+  if (cat && cat.code === "BAN") return null;          // tyres: cost differs from grosir by design (cases 1 & 2)
+  const t = (rows || (tiers[pid] || []).filter(x => x.price_list_id === defaultList)).map(x => ({ min_qty: Number(x.min_qty), price: Number(x.price) }));
+  return t.length >= 2 ? t.sort((a, b) => b.min_qty - a.min_qty)[0] : null;
+}
+
 // product picker: words in any order ("ava filter" finds "Filter Oli Avanza")
 let puSugg = [], puSel = 0;
 function puSuggest(i) {
@@ -819,8 +835,11 @@ function puCalc() {
     const last = lastCost[p.id], bits = [`stok ${num(stock[p.id] || 0)}`];
     if (p.isi_per_dus) bits.push(`isi ${p.isi_per_dus}/dus — qty dalam PCS`);
     if (last) bits.push(`beli terakhir ${num(last)}/pcs`);
+    const g = grosirTier(p.id);
+    if (g) bits.push(`harga ${g.min_qty}+ = ${num(g.price)}`);
     let warn = "";
     if (last && c && (c < last * 0.6 || c > last * 1.6)) warn = ` <b style="color:var(--red)">⚠ harga ${num(c)} jauh dari biasanya (${num(last)}). Salah isi dus?</b>`;
+    else if (g && c && c !== g.price) warn = ` <b style="color:var(--red)">⚠ harga beli ${num(c)} ≠ harga ${g.min_qty}+ (${num(g.price)})</b>`;
     h.innerHTML = `<span class="muted">${bits.join(" · ")}</span>${warn}`;
   });
   $("puTotal").textContent = "Total " + rp(tot);
@@ -840,6 +859,11 @@ async function savePurchase() {
     items.push({ product_id: p.id, qty: q, unit_cost: Number(l.cost) });
   }
   if (!items.length) { err.textContent = "Belum ada barang."; return; }
+  const mism = items.filter(it => it.qty > 0).map(it => ({ it, p: products.find(x => x.id === it.product_id), g: grosirTier(it.product_id) }))
+    .filter(x => x.g && x.it.unit_cost !== x.g.price);
+  if (mism.length && !confirm("⚠ HARGA BELI ≠ HARGA GROSIR\n\n" +
+      mism.map(x => `• ${x.p.name}\n   beli ${num(x.it.unit_cost)}  vs  harga ${x.g.min_qty}+ ${num(x.g.price)}`).join("\n") +
+      "\n\nUntuk oli/cairan dari Central Motor, keduanya harus SAMA.\nSudah cek harga beli DAN harga jualnya?\n\nOK = simpan apa adanya (akan muncul di Tinjauan harian)\nBatal = kembali dan perbaiki")) return;
   const args = puCorrects
     ? { p_supplier: puCorrects.supplier_id, p_received: puCorrects.received_date, p_items: items, p_corrects: puCorrects.id, p_reason: $("puReason").value }
     : { p_supplier: Number($("puSup").value) || null, p_received: $("puDate").value, p_items: items, p_supplier_ref: $("puRef").value };
@@ -1219,8 +1243,8 @@ async function saveCustomer() {
 // ═══════════ REVIEW ═══════════
 async function loadReview() {
   const args = { p_from: $("rfrom").value, p_to: $("rto").value };
-  const [a, b, c] = await Promise.all([sb.rpc("review_list", args), sb.rpc("review_extra", args), sb.rpc("review_prices", args)]);
-  const error = a.error || b.error || c.error, data = error ? null : (a.data || []).concat(b.data || [], c.data || []).sort((x, y) => (y.at || "9") > (x.at || "9") ? 1 : -1);
+  const [a, b, c, d] = await Promise.all([sb.rpc("review_list", args), sb.rpc("review_extra", args), sb.rpc("review_prices", args), sb.rpc("review_cost_check", args)]);
+  const error = a.error || b.error || c.error || d.error, data = error ? null : (a.data || []).concat(b.data || [], c.data || [], d.data || []).sort((x, y) => (y.at || "9") > (x.at || "9") ? 1 : -1);
   if (error) { $("rtable").innerHTML = `<tr><td colspan="6" class="err">${esc(error.message)}</td></tr>`; return; }
   $("rtable").innerHTML = data.map(r => `<tr><td class="small">${r.at ? new Date(r.at).toLocaleString("id-ID", { timeZone: "Asia/Jakarta" }) : ""}</td>
     <td><b>${esc(r.kind)}</b></td><td>${esc(r.invoice || "")}</td><td>${esc(r.who || "")}</td><td>${esc(r.detail)}</td>
