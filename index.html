@@ -220,6 +220,8 @@ let cats = [], products = [], byId = {}, tiers = {}, stock = {}, carModels = [];
 let defaultList = null, priceListNames = {};
 let catFilter = null, kind = "jasa";   // kind: "barang" | "jasa"; catFilter: category id (barang) or service group (jasa)
 let cust = null, vehicles = [], vehicleId = null, freePlate = "";
+const NO_CAR = -1;   // vehicleId = NO_CAR: "Tanpa mobil (beli barang)" — allowed only when the cart has no services
+const cartHasService = () => cart.some(l => byId[l.pid]?.is_service);
 let sale = null;            // loaded saved invoice (null = new invoice)
 let cart = [];              // lines not yet saved: {pid, qty, price, reason, manual}
 let editing = -1;           // index of cart line being edited
@@ -393,19 +395,21 @@ function renderCust() {
   $("custMeta").innerHTML = esc(meta.join(" · ")) + (cust.allow_tempo ? ' <span class="badge b-tempo">TEMPO</span>' : "")
     + (miss.length && !sale ? ` <button class="link small danger" onclick="openCustModal('edit')">Lengkapi ${miss.join(", ")}</button>` : "");
   const v = vehicles.find(x => x.id === vehicleId);
+  const plateTxt0 = vehicleId === NO_CAR ? "Tanpa mobil" : null;
   const plateTxt = v ? v.plate : (sale ? sale.plate : "") || "";
-  $("plateChip").textContent = plateTxt;
-  $("plateChip").classList.toggle("hide", !plateTxt);
+  $("plateChip").textContent = plateTxt0 || plateTxt;
+  $("plateChip").classList.toggle("hide", !(plateTxt0 || plateTxt));
   $("custChangeBtn").classList.toggle("hide", !!sale);
   if (sale) { $("vehBox").innerHTML = ""; return; }
-  let h = vehicles.map(x => `<button class="${x.id === vehicleId ? "on" : ""}" onclick="pickVehicle(${x.id})">${esc(vehLabel(x))}${x.color ? "" : ' <span style="color:var(--red)">· warna?</span>'}</button>`).join("");
+  let h = `<button class="${vehicleId === NO_CAR ? "on" : ""}" onclick="pickVehicle(NO_CAR)" title="Untuk pembelian barang / grosir / kulakan tanpa servis">Tanpa mobil (beli barang)</button>`;
+  h += vehicles.map(x => `<button class="${x.id === vehicleId ? "on" : ""}" onclick="pickVehicle(${x.id})">${esc(vehLabel(x))}${x.color ? "" : ' <span style="color:var(--red)">· warna?</span>'}</button>`).join("");
   h += `<button onclick="openCustModal('vehicle')">+ Kendaraan</button>`;
-  if (!vehicles.length) h += `<span class="small" style="color:var(--red);align-self:center">Tambah kendaraan dulu</span>`;
+
   $("vehBox").innerHTML = h;
 }
 
 async function pickVehicle(id) {
-  const v = vehicles.find(x => x.id === id);
+  const v = id === NO_CAR ? null : vehicles.find(x => x.id === id);
   if (v && !String(v.color || "").trim()) {
     const color = prompt(`Warna mobil ${v.plate}? (wajib, untuk CCTV & komplain)`);
     if (!color || !color.trim()) { toast("Warna wajib diisi sebelum kendaraan bisa dipakai.", "err"); return; }
@@ -458,7 +462,7 @@ function openCustModal(mode) {
   $("cmCustFields").classList.toggle("hide", mode === "vehicle");
   $("cmVehFields").classList.toggle("hide", mode === "edit");
   ["cmName","cmPhone","cmAddr","cmPlate","cmColor","cmModel"].forEach(id => $(id).value = "");
-  $("cmNewModel").classList.toggle("hide", ME.role === "kasir");
+  $("cmNewModel").classList.remove("hide");
   if (mode === "new") {
     const raw = $("custQ").value.trim();
     if (/^[\d\s+-]{6,}$/.test(raw)) $("cmPhone").value = raw; else if (/^[A-Za-z]{1,2}\s*\d/.test(raw)) $("cmPlate").value = raw.toUpperCase(); else $("cmName").value = raw;
@@ -477,10 +481,19 @@ function fillModels(sel) {
 }
 // Only owner/admin can add a car model, so the list stays clean ("tyt avz" can't sneak in).
 async function newCarModel() {
-  const brand = prompt("Merk (mis. Toyota):"); if (!brand || !brand.trim()) return;
-  const model = prompt(`Tipe ${brand.trim()} (mis. Avanza):`); if (!model || !model.trim()) return;
+  // Cashiers add a model under an existing brand; only owner/admin can add a new brand. Duplicates are refused by the database.
+  const brands = [...new Set(carModels.map(m => m.brand))].sort();
+  let brand = prompt(`Merk? Pilih salah satu:\n${brands.join(", ")}` + (ME.role === "kasir" ? "" : "\n(atau ketik merk baru)"));
+  if (!brand || !brand.trim()) return;
+  const hit = brands.find(b => b.toLowerCase() === brand.trim().toLowerCase());
+  if (!hit && ME.role === "kasir") { $("cmErr").textContent = `Merk "${brand}" belum ada. Merk baru hanya bisa ditambah owner/admin.`; return; }
+  brand = hit || brand.trim().replace(/\s+/g, " ").replace(/\b\w/g, ch => ch.toUpperCase());
+  const model = prompt(`Tipe ${brand} (tulis lengkap, mis. Avanza, Grand Max):`); if (!model || !model.trim()) return;
   const cap = t => t.trim().replace(/\s+/g, " ").replace(/\b\w/g, ch => ch.toUpperCase());
-  const { data, error } = await sb.from("car_models").insert({ brand: cap(brand), model: cap(model) }).select().single();
+  const norm = t => t.toLowerCase().replace(/[^a-z0-9]/g, "");
+  const dup = carModels.find(m => norm(m.brand + m.model) === norm(brand + model));
+  if (dup) { fillModels(dup.id); $("cmErr").textContent = `${dup.brand} ${dup.model} sudah ada — sudah dipilih.`; return; }
+  const { data, error } = await sb.from("car_models").insert({ brand, model: cap(model) }).select().single();
   if (error) { $("cmErr").textContent = "Gagal tambah model: " + error.message; return; }
   carModels.push(data); fillModels(data.id);
 }
@@ -510,7 +523,7 @@ async function saveCustModal() {
       if (up.error) throw up.error;
       c = up.data;
     }
-    let vid = vehicleId;
+    let vid = vehicleId === NO_CAR ? null : vehicleId;
     if (cmMode !== "edit") {
       const modelId = Number($("cmModel").value);
       const v = await sb.from("vehicles").insert({ customer_id: c.id, plate, car_model_id: modelId, color }).select().single();
@@ -524,7 +537,7 @@ async function saveCustModal() {
 }
 
 // ═══════════════════════ SAVED INVOICE ═══════════════════════
-const canEdit = () => sale && sale.status !== "void" && sale.business_date === todayJkt();
+const canEdit = () => sale && sale.status !== "void" && (sale.business_date === todayJkt() || ME.role === "owner");
 const whyLocked = () => sale.status === "void" ? "sudah void" : "tanggal " + sale.business_date + " sudah lewat — buat nota susulan";
 const activeItems = () => (sale?.sale_items || []).filter(i => !i.cancelled_at);
 
@@ -616,7 +629,8 @@ function renderFoot() {
     if (tempoOK) h += `<div class="seg2"><button class="${method === "bayar" ? "on" : ""}" onclick="method='bayar';renderFoot()">Bayar sekarang</button><button class="${method === "tempo" ? "on" : ""}" onclick="method='tempo';renderFoot()">Tempo</button></div>`;
     if (method !== "tempo" && tot > 0) h += payBlock(tot);
     h += segPrint;
-    const why = !cust ? "Pilih pelanggan dulu." : !vehicleId ? "Pilih / tambah kendaraan dulu." : custMissing(cust).length ? "Lengkapi data pelanggan: " + custMissing(cust).join(", ") + "." : "";
+    const why = !cust ? "Pilih pelanggan dulu." : !vehicleId ? "Pilih kendaraan, atau \"Tanpa mobil\" kalau hanya beli barang."
+      : vehicleId === NO_CAR && cartHasService() ? "Ada jasa di keranjang: pilih kendaraan (bukan \"Tanpa mobil\")." : custMissing(cust).length ? "Lengkapi data pelanggan: " + custMissing(cust).join(", ") + "." : "";
     const bad = !cart.length || missingReason() || !!why;
     h += `<div class="acts"><button ${bad ? "disabled" : ""} onclick="saveNew(false)" title="Simpan tanpa bayar — muncul di Transaksi tertunda">Simpan</button>
       <button class="go" ${bad ? "disabled" : ""} onclick="saveNew(true)">${method === "tempo" ? "Simpan tempo & cetak" : "Bayar & cetak"}</button></div>`;
@@ -630,7 +644,8 @@ function renderFoot() {
     if (sale.is_tempo) badge += ' <span class="badge b-tempo">TEMPO</span>';
     if (sale.status === "void") h += `<div class="notice red">VOID — ${esc(sale.void_reason)}. Tidak bisa diubah.</div>`;
     else if (!canEdit()) h += `<div class="notice warn">Invoice tanggal ${sale.business_date}: isi tidak bisa diubah lagi. Untuk barang/jasa yang lupa, buat invoice baru (nota susulan). Pembayaran tetap bisa.</div>`;
-    h += `<div class="sum"><span>${badge} · ${fmtDT(sale.opened_at)} · ${esc(sale.cashier?.full_name || "")}</span></div>`;
+    h += `<div class="sum"><span>${badge} · ${invDate(sale)} · ${esc(sale.cashier?.full_name || "")}</span></div>`;
+    if (sale.business_date !== todayJkt() && ME.role === "owner" && sale.status !== "void") h += `<div class="notice warn">Invoice tanggal ${sale.business_date}. Anda owner: perubahan tetap bisa, dan tercatat.</div>`;
     sale.payments.forEach(p => h += `<div class="sum"><span>${payLabel(p)} · ${fmtDT(p.created_at)}</span><span>${num(p.amount)}</span></div>`);
     h += `<div class="total"><span>Total</span><b>${rp(tot)}</b></div>`;
     if (sale.status !== "void" && paid) h += `<div class="sum"><span>Sisa</span><span style="font-weight:700;color:${sisa > 0 ? "var(--red)" : "inherit"}">${num(Math.max(sisa, 0))}</span></div>`;
@@ -651,6 +666,7 @@ function renderFoot() {
       h += sisa > 0 && over <= 0 ? `<button class="go" onclick="payExisting()">Bayar & cetak</button>` : `<button class="primary" onclick="reprint()">Cetak ulang</button>`;
       h += `</div><div class="acts2">`;
       if (sisa > 0 && over <= 0) h += `<button onclick="reprint()">Cetak ${sale.is_tempo ? "(belum lunas)" : ""}</button>`;
+      if (ME.role === "owner" && sale.status !== "void") h += `<button onclick="changeDate()">Ubah tanggal</button>`;
       if (canEdit()) h += `<button class="danger" onclick="voidSale()">Void invoice</button>`;
       h += `</div>`;
     }
@@ -705,11 +721,11 @@ async function guard(fn) {
 }
 
 function saveNew(payAndPrint) {
-  if (!cust || !vehicleId) { toast("Pilih pelanggan dan kendaraan dulu.", "err"); return; }
+  if (!cust || !vehicleId) { toast("Pilih pelanggan dan kendaraan (atau \"Tanpa mobil\") dulu.", "err"); return; }
   guard(async () => {
     const pay = method === "tempo" ? [] : payPayload();
     const { data: s, error } = await sb.rpc("create_sale", {
-      p_customer: cust.id, p_vehicle: vehicleId, p_plate: null,
+      p_customer: cust.id, p_vehicle: vehicleId === NO_CAR ? null : vehicleId, p_plate: null,
       p_items: itemsPayload(), p_tempo: method === "tempo"
     });
     if (error) throw error;
@@ -797,6 +813,26 @@ function voidSale() {
   });
 }
 
+// Date printed on the invoice = business_date (owner may change it); time only if it is still the day it was made.
+function invDate(s) {
+  const made = new Date(s.opened_at).toLocaleDateString("en-CA", { timeZone: "Asia/Jakarta" });
+  if (made === s.business_date) return fmtDT(s.opened_at);
+  const [y, m, d] = s.business_date.split("-"); return `${d}/${m}/${y}`;
+}
+
+function changeDate() {
+  const d = prompt(`Tanggal baru untuk ${sale.invoice_no} (sekarang ${sale.business_date}).\nFormat: TTTT-BB-HH, mis. 2026-11-22`, sale.business_date);
+  if (!d) return;
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(d.trim())) { toast("Format tanggal harus TTTT-BB-HH, mis. 2026-11-22.", "err"); return; }
+  const reason = prompt("Alasan ubah tanggal (wajib), mis. \"PT minta tanggal 22\":");
+  if (!reason || !reason.trim()) { toast("Alasan wajib diisi. Tanggal tidak diubah.", "err"); return; }
+  guard(async () => {
+    const { error } = await sb.rpc("change_sale_date", { p_sale: sale.id, p_date: d.trim(), p_reason: reason });
+    if (error) throw error;
+    sale = await loadSale(sale.id); toast(`Tanggal ${sale.invoice_no} → ${sale.business_date}`); renderAll();
+  });
+}
+
 function reprint() { guard(async () => { await doPrint(sale.id); sale = await loadSale(sale.id); renderAll(); }); }
 
 async function refreshStock() {
@@ -849,11 +885,11 @@ function stampText(s) {
 
 function printInvoice(s) {
   const L = ME.locations, items = s.sale_items.filter(i => !i.cancelled_at);
-  const veh = s.vehicles ? vehLabel(s.vehicles) : (s.plate || "-");
+  const veh = s.vehicles ? vehLabel(s.vehicles) : (s.plate || "— (pembelian barang)");
   const sisa = Number(s.total) - Number(s.paid_amount);
   return `<div class="p-inv">
     <table><tr><td style="width:60%"><b style="font-size:14pt">${esc(L.name.toUpperCase())}</b><br>${esc(L.address || "")}<br>${esc(L.phone || "")}</td>
-      <td class="p-r"><b style="font-size:13pt">INVOICE</b><br>${s.invoice_no}${s.revision > 1 ? " (Rev " + s.revision + ")" : ""}<br>${fmtDT(s.opened_at)}<br>Kasir: ${esc(s.cashier?.full_name || "")}</td></tr></table>
+      <td class="p-r"><b style="font-size:13pt">INVOICE</b><br>${s.invoice_no}${s.revision > 1 ? " (Rev " + s.revision + ")" : ""}<br>${invDate(s)}<br>Kasir: ${esc(s.cashier?.full_name || "")}</td></tr></table>
     <div class="p-hr"></div>
     <table><tr><td>Pelanggan : ${esc(s.customers.name)}${s.customers.phone ? " / " + esc(s.customers.phone) : ""}</td></tr>
       ${s.customers.address ? `<tr><td>Alamat    : ${esc(s.customers.address)}</td></tr>` : ""}
@@ -879,7 +915,7 @@ function printSmall(s) {
   return `<div class="p-small">
     <div style="text-align:center"><b>${esc(L.name.toUpperCase())}</b><br>${esc(L.address || "")} ${esc(L.phone || "")}</div>
     <div class="p-hr"></div>
-    ${s.invoice_no}${s.revision > 1 ? " Rev " + s.revision : ""}<br>${fmtDT(s.opened_at)} · ${esc(s.cashier?.full_name || "")}<br>
+    ${s.invoice_no}${s.revision > 1 ? " Rev " + s.revision : ""}<br>${invDate(s)} · ${esc(s.cashier?.full_name || "")}<br>
     ${esc(s.customers.name)}${s.plate ? " · " + esc(s.plate) : ""}
     <div class="p-hr"></div>
     <table>${items.map(it => `<tr><td colspan="2">${esc(it.products.name)}</td></tr><tr><td>&nbsp; ${num(it.qty)} x ${num(it.unit_price)}</td><td class="p-r">${num(it.line_total)}</td></tr>`).join("")}</table>

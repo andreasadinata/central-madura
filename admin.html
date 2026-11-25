@@ -18,6 +18,10 @@
   .tiers input{padding:6px 8px}
   .listhead{display:flex;justify-content:space-between;align-items:center;margin:14px 0 6px;font-weight:600}
   .off td{color:var(--faint)}
+  .results{position:absolute;left:0;right:0;top:44px;background:var(--surface);border:1px solid var(--border);border-radius:8px;
+    box-shadow:0 8px 24px rgba(0,0,0,.08);z-index:20;max-height:300px;overflow:auto}
+  .results div{padding:8px 10px;cursor:pointer;border-bottom:1px solid var(--border)}
+  .results div:hover,.results div.sel{background:var(--accent-soft)}
 </style>
 </head>
 <body>
@@ -42,6 +46,7 @@
     <button onclick="logout()">Keluar</button>
   </div>
   <div class="tabs">
+    <button id="t-penjualan" onclick="tab('penjualan')">Penjualan</button>
     <button id="t-produk" onclick="tab('produk')">Produk & harga</button>
     <button id="t-pembelian" onclick="tab('pembelian')">Pembelian</button>
     <button id="t-opname" onclick="tab('opname')">Stok opname</button>
@@ -65,11 +70,29 @@
       <span class="small muted">Tampilkan harga:</span>
       <div class="seg2" id="plists"></div>
       <button class="small" onclick="newPriceList()">+ Daftar harga</button>
+      <span id="plistActs"></span>
       <span class="small muted">Daftar harga = set harga khusus untuk pelanggan tertentu (mis. PT tempo). Isi harganya di tiap produk, lalu pasang ke pelanggan di tab Pelanggan.</span>
     </div>
     <div class="panel"><table>
       <thead id="phead"></thead>
       <tbody id="ptable"></tbody></table></div>
+  </div>
+
+  <!-- PENJUALAN -->
+  <div class="page hide" id="p-penjualan" style="max-width:1400px">
+    <div class="bar">
+      <select id="sLoc" style="max-width:220px"></select>
+      <select id="sStatus" style="max-width:170px"><option value="">Semua status</option><option value="paid">Lunas</option><option value="open">Belum lunas</option><option value="tempo">Tempo (belum lunas)</option><option value="void">Void</option></select>
+      <select id="sDisc" style="max-width:170px"><option value="">Diskon: semua</option><option value="yes">Dengan diskon</option><option value="no">Tanpa diskon</option></select>
+      <input type="date" id="sFrom" style="width:160px"> – <input type="date" id="sTo" style="width:160px">
+      <input id="sQ" placeholder="Cari invoice / pelanggan / plat" style="max-width:240px">
+      <button class="primary" onclick="loadSales()">Tampilkan</button>
+      <button onclick="exportSales()">Export CSV</button>
+    </div>
+    <div class="bar small" id="sSum"></div>
+    <div class="panel"><table>
+      <thead><tr><th>Tanggal</th><th>Invoice</th><th>Pelanggan – Plat</th><th>Cabang</th><th>Status</th><th class="num">Diskon</th><th class="num">Total</th><th class="num">Dibayar</th><th class="num">Sisa</th></tr></thead>
+      <tbody id="stable"></tbody></table></div>
   </div>
 
   <!-- PEMBELIAN -->
@@ -243,6 +266,13 @@
   </div>
 </div>
 
+<div class="overlay" id="sdModal">
+  <div class="modal" style="width:760px">
+    <header><h3 id="sdTitle">Invoice</h3><button onclick="closeModal('sdModal')">Tutup</button></header>
+    <div class="body" id="sdBody"></div>
+  </div>
+</div>
+
 <div class="overlay" id="pdModal">
   <div class="modal" style="width:720px">
     <header><h3 id="pdTitle">Pembelian</h3><button onclick="closeModal('pdModal')">Tutup</button></header>
@@ -274,7 +304,7 @@ let cats = [], products = [], tiers = {}, stock = {}, lists = [], locations = []
 let defaultList = null, kind = "barang", showList = null, sortKey = "name", sortDir = 1;
 const todayJkt = () => new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Jakarta" });
 const closeModal = id => $(id).classList.remove("open");
-const TABS = ["produk", "pembelian", "opname", "pelanggan", "tinjauan", "rekening", "pengguna"];
+const TABS = ["penjualan", "produk", "pembelian", "opname", "pelanggan", "tinjauan", "rekening", "pengguna"];
 
 authGate(start, ["owner", "admin"]);
 
@@ -283,7 +313,11 @@ async function start() {
   if (ME.role === "owner") $("t-pengguna").classList.remove("hide");
   $("rfrom").value = $("rto").value = todayJkt();
   try { await loadAll(); } catch (e) { toast("Gagal memuat: " + esc(errText(e)), "err"); return; }
-  tab(TABS.includes(location.hash.slice(1)) ? location.hash.slice(1) : "produk");
+  const first = new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Jakarta" }).slice(0, 8) + "01";
+  $("sFrom").value = first; $("sTo").value = todayJkt();
+  $("sLoc").innerHTML = `<option value="">Semua cabang</option>` + locations.map(l => `<option value="${l.id}" ${l.id === ME.location_id ? "selected" : ""}>${esc(l.name)}</option>`).join("");
+  $("sQ").addEventListener("keydown", e => { if (e.key === "Enter") loadSales(); });
+  tab(TABS.includes(location.hash.slice(1)) ? location.hash.slice(1) : "penjualan");
 }
 
 function tab(name) {
@@ -293,6 +327,7 @@ function tab(name) {
   if (name === "pengguna") loadUsers();
   if (name === "rekening") loadBanks();
   if (name === "pembelian") loadPurchases();
+  if (name === "penjualan" && !salesRows) loadSales();
   if (name === "opname") { renderOpname(); loadAdjustments(); }
   if (name === "pelanggan" && !custRows.length) searchCustomers(true);
 }
@@ -331,7 +366,22 @@ const tierSummary = (pid, lid) => (tiers[pid] || []).filter(t => t.price_list_id
 const catName = id => (cats.find(c => c.id === id) || {}).name || "";
 
 function renderListToggle() {
-  $("plists").innerHTML = lists.map(x => `<button class="${x.id === showList ? "on" : ""}" onclick="showList=${x.id};renderListToggle();renderProducts()">${esc(x.name)}</button>`).join("");
+  const act = lists.filter(x => x.is_active || x.id === showList);
+  $("plists").innerHTML = act.map(x => `<button class="${x.id === showList ? "on" : ""}" onclick="showList=${x.id};renderListToggle();renderProducts()">${esc(x.name)}${x.is_active ? "" : " (arsip)"}</button>`).join("");
+  const cur = lists.find(x => x.id === showList), arch = lists.filter(x => !x.is_active && x.id !== showList);
+  $("plistActs").innerHTML = (cur && !cur.is_default ? (cur.is_active
+      ? `<button class="small" onclick="archiveList(${cur.id}, false)">Arsipkan "${esc(cur.name)}"</button>`
+      : `<button class="small" onclick="archiveList(${cur.id}, true)">Aktifkan lagi "${esc(cur.name)}"</button>`) : "")
+    + (arch.length ? ` <select class="small" style="width:auto" onchange="if(this.value){showList=Number(this.value);renderListToggle();renderProducts()}"><option value="">Arsip (${arch.length})…</option>${arch.map(x => `<option value="${x.id}">${esc(x.name)}</option>`).join("")}</select>` : "");
+}
+async function archiveList(id, active) {
+  const l = lists.find(x => x.id === id);
+  const { count } = await sb.from("customers").select("id", { count: "exact", head: true }).eq("price_list_id", id);
+  if (!active && !confirm(`Arsipkan "${l.name}"?\n${count || 0} pelanggan memakai daftar ini — mereka otomatis kembali ke harga Umum.\nHarga di daftar ini tetap tersimpan dan bisa diaktifkan lagi.`)) return;
+  const { error } = await sb.from("price_lists").update({ is_active: active }).eq("id", id);
+  if (error) { toast("Gagal: " + esc(error.message), "err"); return; }
+  if (!active) showList = defaultList;
+  toast(active ? "Daftar harga aktif lagi." : "Daftar harga diarsipkan."); await loadAll();
 }
 
 function setKind(k) {
@@ -405,7 +455,7 @@ function editProduct(id) {
   $("pmService").disabled = !!id;   // goods ↔ service can't flip once created (stock history)
   pmKindChanged();
   draftTiers = {};
-  lists.forEach(l => draftTiers[l.id] = (tiers[id] || []).filter(t => t.price_list_id === l.id)
+  lists.filter(l => l.is_active).forEach(l => draftTiers[l.id] = (tiers[id] || []).filter(t => t.price_list_id === l.id)
     .sort((a, b) => a.min_qty - b.min_qty).map(t => ({ id: t.id, min_qty: Number(t.min_qty), price: Number(t.price) })));
   if (!id) draftTiers[defaultList] = [{ min_qty: 1, price: 0 }];
   renderTiers();
@@ -422,7 +472,7 @@ function suggestSku() {
 }
 
 function renderTiers() {
-  $("pmTiers").innerHTML = lists.map(l => `
+  $("pmTiers").innerHTML = lists.filter(l => l.is_active).map(l => `
     <div class="listhead"><span>Harga — ${esc(l.name)}${l.is_default ? " (wajib)" : " <span class='small muted'>(kosongkan = pakai harga Umum)</span>"}</span>
       <button class="small" onclick="addTier(${l.id})">+ tingkat</button></div>
     <table class="tiers">${draftTiers[l.id].map((t, i) => `<tr>
@@ -450,7 +500,7 @@ async function saveProduct() {
   if (!row.name) { err.textContent = "Nama wajib diisi."; return; }
   if (row.is_service && !row.service_group) { err.textContent = "Grup jasa wajib diisi (mis. Balancing, Spooring, Lain-lain)."; return; }
   if (!row.is_service) row.service_group = null;
-  for (const l of lists) {
+  for (const l of lists.filter(l => l.is_active)) {
     const rows = draftTiers[l.id];
     if (rows.some(r => !(r.min_qty > 0) || !(r.price >= 0))) { err.textContent = `Daftar ${l.name}: qty harus > 0 dan harga ≥ 0.`; return; }
     if (new Set(rows.map(r => r.min_qty)).size !== rows.length) { err.textContent = `Daftar ${l.name}: ada qty yang sama dua kali.`; return; }
@@ -476,9 +526,9 @@ async function saveProduct() {
     // sync tiers: delete removed, update changed, insert new
     const old = tiers[pid] || [];
     const keep = new Set(Object.values(draftTiers).flat().filter(t => t.id).map(t => t.id));
-    const del = old.filter(t => !keep.has(t.id)).map(t => t.id);
+    const del = old.filter(t => draftTiers[t.price_list_id] && !keep.has(t.id)).map(t => t.id);   // archived lists untouched
     if (del.length) { const { error } = await sb.from("price_tiers").delete().in("id", del); if (error) throw error; }
-    for (const l of lists) for (const t of draftTiers[l.id]) {
+    for (const l of lists.filter(l => l.is_active)) for (const t of draftTiers[l.id]) {
       if (t.id) {
         const o = old.find(x => x.id === t.id);
         if (Number(o.min_qty) !== t.min_qty || Number(o.price) !== t.price) {
@@ -502,6 +552,70 @@ async function deleteProduct() {
   const { error } = await sb.rpc("delete_product", { p_product: editingProduct.id });
   if (error) { $("pmErr").textContent = error.message; return; }
   closeModal("prodModal"); toast("Produk dihapus."); await loadAll();
+}
+
+// ═══════════ SALES LIST ═══════════
+let salesRows = null;
+async function loadSales() {
+  const q = () => {
+    let x = sb.from("sale_summary").select("*").gte("business_date", $("sFrom").value).lte("business_date", $("sTo").value)
+      .order("business_date", { ascending: false }).order("id", { ascending: false });
+    if ($("sLoc").value) x = x.eq("location_id", Number($("sLoc").value));
+    const st = $("sStatus").value;
+    if (st === "tempo") x = x.eq("status", "open").eq("is_tempo", true); else if (st) x = x.eq("status", st);
+    if ($("sDisc").value === "yes") x = x.gt("discount", 0); else if ($("sDisc").value === "no") x = x.eq("discount", 0);
+    return x;
+  };
+  $("stable").innerHTML = `<tr><td colspan="9" class="muted">Memuat…</td></tr>`;
+  try { salesRows = await fetchAll(q); } catch (e) { $("stable").innerHTML = `<tr><td colspan="9" class="err">${esc(errText(e))}</td></tr>`; return; }
+  const term = $("sQ").value.trim().toLowerCase();
+  if (term) salesRows = salesRows.filter(r => (r.invoice_no + " " + r.customer_name + " " + (r.plate || "")).toLowerCase().includes(term));
+  const live = salesRows.filter(r => r.status !== "void"), sum = k => live.reduce((a, r) => a + Number(r[k]), 0);
+  $("sSum").innerHTML = `<b>${num(live.length)}</b> invoice · Total <b>${rp(sum("total"))}</b> · Dibayar ${rp(sum("paid_amount"))} · Sisa <b style="color:var(--red)">${rp(sum("due"))}</b> · Diskon ${rp(sum("discount"))}` +
+    (salesRows.length > live.length ? ` · <span class="muted">${salesRows.length - live.length} void (tidak dihitung)</span>` : "");
+  const badge = r => r.status === "void" ? '<span class="badge b-void">VOID</span>' : r.status === "paid" ? '<span class="badge b-paid">LUNAS</span>'
+    : '<span class="badge b-open">BELUM LUNAS</span>' + (r.is_tempo ? ' <span class="badge b-tempo">TEMPO</span>' : "");
+  $("stable").innerHTML = salesRows.slice(0, 1000).map(r => `<tr class="click ${r.status === "void" ? "off" : ""}" onclick="showSale(${r.id})">
+    <td class="small">${r.business_date}</td><td><b>${r.invoice_no}</b>${r.revision > 1 ? ` <span class="tiny muted">Rev ${r.revision}</span>` : ""}</td>
+    <td>${esc(r.customer_name)}${r.plate ? " – " + esc(r.plate) : ""}</td><td>${esc(r.location_code)}</td><td>${badge(r)}</td>
+    <td class="num" style="${Number(r.discount) ? "color:var(--warn-text);font-weight:600" : ""}">${Number(r.discount) ? num(r.discount) : "—"}</td>
+    <td class="num">${num(r.total)}</td><td class="num">${num(r.paid_amount)}</td><td class="num" style="${Number(r.due) ? "color:var(--red)" : ""}">${Number(r.due) ? num(r.due) : "—"}</td></tr>`).join("")
+    || `<tr><td colspan="9" class="muted">Tidak ada penjualan.</td></tr>`;
+  if (salesRows.length > 1000) $("stable").insertAdjacentHTML("beforeend", `<tr><td colspan="9" class="muted">Menampilkan 1.000 dari ${num(salesRows.length)}. Export CSV berisi semuanya.</td></tr>`);
+}
+
+async function showSale(id) {
+  const { data: s, error } = await sb.from("sales")
+    .select("*, customers(name,phone,address), vehicles(plate,color,car_models(brand,model)), locations(name), cashier:profiles!sales_cashier_id_fkey(full_name), sale_items(*, products(sku,name)), payments(*, bank_accounts(name))")
+    .eq("id", id).single();
+  if (error) { toast(esc(error.message), "err"); return; }
+  const { data: hist } = await sb.from("audit_log").select("at, action, detail").eq("table_name", "sales").eq("record_id", id).order("at");
+  s.sale_items.sort((a, b) => a.id - b.id);
+  const v = s.vehicles, veh = v ? [v.plate, v.car_models && v.car_models.brand + " " + v.car_models.model, v.color].filter(Boolean).join(" · ") : "tanpa mobil";
+  const act = { sale_create: "dibuat", sale_add_items: "item ditambah", sale_cancel_item: "item dibatalkan", sale_pay: "pembayaran", sale_refund: "uang dikembalikan", sale_void: "void", sale_date_change: "tanggal diubah" };
+  $("sdTitle").textContent = s.invoice_no + (s.revision > 1 ? " · Rev " + s.revision : "");
+  $("sdBody").innerHTML = `<p class="small" style="margin-bottom:10px">${esc(s.locations.name)} · tanggal <b>${s.business_date}</b> · kasir ${esc(s.cashier?.full_name || "")}<br>
+      ${esc(s.customers.name)} · ${esc(s.customers.phone || "")} · ${esc(s.customers.address || "")}<br>Kendaraan: ${esc(veh)}${s.status === "void" ? `<br><b style="color:var(--red)">VOID: ${esc(s.void_reason)}</b>` : ""}</p>
+    <table><thead><tr><th>Item</th><th class="num">Qty</th><th class="num">Harga</th><th class="num">Normal</th><th class="num">Jumlah</th></tr></thead><tbody>
+    ${s.sale_items.map(i => `<tr class="${i.cancelled_at ? "off" : ""}"><td>${esc(i.products.name)}${i.cancelled_at ? `<div class="tiny" style="color:var(--red)">dibatalkan: ${esc(i.cancel_reason)}</div>` : ""}${i.price_reason ? `<div class="tiny" style="color:var(--warn-text)">alasan harga: ${esc(i.price_reason)}</div>` : ""}</td>
+      <td class="num">${num(i.qty)}</td><td class="num">${num(i.unit_price)}</td><td class="num ${Number(i.unit_price) < Number(i.standard_price) ? "" : "muted"}">${num(i.standard_price)}</td><td class="num">${i.cancelled_at ? "<s>" + num(i.line_total) + "</s>" : num(i.line_total)}</td></tr>`).join("")}
+    <tr><td colspan="4"><b>Total</b></td><td class="num"><b>${num(s.total)}</b></td></tr></tbody></table>
+    <div class="listhead">Pembayaran</div>
+    ${s.payments.map(p => `<div class="row small" style="justify-content:space-between"><span>${new Date(p.created_at).toLocaleString("id-ID", { timeZone: "Asia/Jakarta" })} · ${p.is_change ? "kembalian tunai" : p.method + (p.bank_accounts ? " " + esc(p.bank_accounts.name) : "")}${p.notes && !p.is_change ? " — " + esc(p.notes) : ""}</span><span>${num(p.amount)}</span></div>`).join("") || '<span class="small muted">Belum ada.</span>'}
+    <div class="listhead">Riwayat</div>
+    ${(hist || []).map(h => `<div class="small">${new Date(h.at).toLocaleString("id-ID", { timeZone: "Asia/Jakarta" })} · ${act[h.action] || h.action}${h.detail?.reason ? " — " + esc(h.detail.reason) : ""}${h.action === "sale_date_change" ? ` (${h.detail.from} → ${h.detail.to})` : ""}</div>`).join("")}`;
+  $("sdModal").classList.add("open");
+}
+
+function exportSales() {
+  if (!salesRows || !salesRows.length) { toast("Tampilkan data dulu, lalu export.", "err"); return; }
+  const cols = [["business_date","Tanggal"],["invoice_no","Invoice"],["customer_name","Pelanggan"],["plate","Plat"],["location_name","Cabang"],
+    ["status","Status"],["is_tempo","Tempo"],["discount","Diskon"],["total","Total"],["paid_amount","Dibayar"],["due","Sisa"],["cashier","Kasir"]];
+  const cell = v => { v = v == null ? "" : String(v); return /[",\n;]/.test(v) ? '"' + v.replace(/"/g, '""') + '"' : v; };
+  const csv = [cols.map(c => c[1]).join(",")].concat(salesRows.map(r => cols.map(([k]) => cell(r[k])).join(","))).join("\n");
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(new Blob(["﻿" + csv], { type: "text/csv;charset=utf-8" }));
+  a.download = `penjualan_${$("sFrom").value}_${$("sTo").value}.csv`; a.click();
 }
 
 // ═══════════ PURCHASES ═══════════
@@ -551,11 +665,41 @@ function openPurchase(orig) {
   $("puModal").classList.add("open");
 }
 
+// product picker: words in any order ("ava filter" finds "Filter Oli Avanza")
+let puSugg = [], puSel = 0;
+function puSuggest(i) {
+  const term = puLines[i].label.trim().toLowerCase(), box = $("puRes" + i);
+  if (!term) { box.classList.add("hide"); puCalc(); return; }
+  const words = term.split(/\s+/);
+  puSugg = products.filter(p => !p.is_service && p.is_active &&
+    words.every(w => (p.name + " " + p.sku + " " + (p.barcode || "") + " " + (p.brand || "")).toLowerCase().includes(w))).slice(0, 8);
+  puSel = 0;
+  box.innerHTML = puSugg.length ? puSugg.map((p, k) => `<div class="${k === 0 ? "sel" : ""}" onmousedown="puPick(${i},${p.id})">${esc(p.name)} <span class="muted small">${esc(p.sku)} · stok ${num(stock[p.id] || 0)}</span></div>`).join("")
+    : `<div class="muted">Tidak ada barang "${esc(term)}". Tambah dulu di Produk & harga.</div>`;
+  box.classList.remove("hide"); puCalc();
+}
+function puPick(i, pid) {
+  const p = products.find(x => x.id === pid); puLines[i].label = p.sku + " · " + p.name;
+  if (!puLines[i].cost && lastCost[pid]) puLines[i].cost = lastCost[pid];
+  renderPuLines(); setTimeout(() => document.querySelectorAll("#puLines tr")[i]?.querySelectorAll("input")[1]?.focus(), 0);
+}
+function puHide(i) { $("puRes" + i)?.classList.add("hide"); }
+function puKey(e, i) {
+  const box = $("puRes" + i); if (box.classList.contains("hide") || !puSugg.length) return;
+  if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+    e.preventDefault(); puSel = (puSel + (e.key === "ArrowDown" ? 1 : -1) + puSugg.length) % puSugg.length;
+    [...box.children].forEach((d, k) => d.classList.toggle("sel", k === puSel));
+  } else if (e.key === "Enter") { e.preventDefault(); puPick(i, puSugg[puSel].id); }
+  else if (e.key === "Escape") puHide(i);
+}
+
 function addPuLine() { puLines.push({ label: "", qty: "", cost: "" }); renderPuLines(); }
 
 function renderPuLines() {
   $("puLines").innerHTML = puLines.map((l, i) => `<tr>
-    <td><input list="goodsList" value="${esc(l.label)}" placeholder="ketik / scan barang" onchange="puLines[${i}].label=this.value;renderPuLines()"><div class="tiny" id="puHint${i}"></div></td>
+    <td style="position:relative"><input id="puIn${i}" value="${esc(l.label)}" placeholder="ketik nama / SKU / scan barcode" autocomplete="off"
+      oninput="puLines[${i}].label=this.value;puSuggest(${i})" onkeydown="puKey(event,${i})" onblur="setTimeout(()=>puHide(${i}),150)">
+      <div class="results hide" id="puRes${i}"></div><div class="tiny" id="puHint${i}"></div></td>
     <td><input inputmode="decimal" value="${l.qty}" oninput="puLines[${i}].qty=this.value;puCalc()"></td>
     <td><input inputmode="numeric" value="${l.cost === "" ? "" : num(l.cost)}" oninput="this.value=this.value.trim()==='-'?'-':num(parseRp(this.value));puLines[${i}].cost=parseRp(this.value);puCalc()"></td>
     <td class="num" id="puLt${i}"></td>
@@ -743,7 +887,8 @@ function editCustomer(i) {
   editingCust = custRows[i];
   const c = editingCust;
   $("cmName").value = c.name; $("cmPhone").value = c.phone || ""; $("cmAddr").value = c.address || "";
-  $("cmList").innerHTML = `<option value="">Umum (standar)</option>` + lists.filter(l => !l.is_default).map(l => `<option value="${l.id}">${esc(l.name)}</option>`).join("");
+  $("cmList").innerHTML = `<option value="">Umum (standar)</option>` + lists.filter(l => !l.is_default && (l.is_active || l.id === c.price_list_id))
+    .map(l => `<option value="${l.id}">${esc(l.name)}${l.is_active ? "" : " (arsip — pakai harga Umum)"}</option>`).join("");
   $("cmList").value = c.price_list_id || ""; $("cmTempo").value = c.allow_tempo ? "1" : "0"; $("cmActive").value = c.is_active ? "1" : "0";
   $("cmVeh").innerHTML = c.vehicles.length ? c.vehicles.map(v => `<div class="row" style="padding:4px 0">
       <span class="grow">${esc(v.plate)} · ${esc(v.car_models ? v.car_models.brand + " " + v.car_models.model : "-")}${v.is_active ? "" : " (nonaktif)"}</span>

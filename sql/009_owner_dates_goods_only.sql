@@ -1,0 +1,9 @@
+-- 25 Nov 2026 (Supabase migration "v4_owner_dates_goods_only_pricelist_archive_models").
+-- • price_lists.is_active: archived list is ignored by price_for() → its customers get Umum prices.
+-- • _same_day(): owner may still change past invoices (everyone else: same day only).
+-- • change_sale_date(sale, date, reason): owner only, logged, shown in review.
+-- • create_sale: vehicle optional when the invoice has NO services (grosir/kulakan); services need a vehicle.
+-- • car_models: staff may add a model under an existing brand; new brand = owner/admin; duplicates blocked
+--   by a normalized unique index; created_by/created_at → new models show in review.
+-- • view sale_summary: per invoice incl. discount = Σ(normal − sold price) × qty on non-cancelled lines.
+-- • review_extra(): + "Tanggal invoice diubah", "Model mobil baru".
