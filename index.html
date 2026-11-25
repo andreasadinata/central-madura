@@ -588,7 +588,7 @@ async function openSale(id) {
 }
 
 // ── cars from the queue (Antrian): picking one finds the customer by plate and links the invoice to it
-let qCars = [], qTicket = null;
+let qCars = [], qTicket = null, qAutoVeh = null;
 async function refreshQueue() {
   const { data, error } = await sb.rpc("q_for_cashier");
   if (error) return;
@@ -598,13 +598,24 @@ function renderQueueStrip() {
   const el = $("qStrip");
   if (sale || !qCars.length) { el.classList.add("hide"); return; }
   const st = { Done: "✓", Serving: "🔧", Waiting: "⏳", Unfinished: "…" };
+  // a car the cashier picked by customer/vehicle instead of the strip still gets linked to its queue ticket
+  if (!qTicket && vehicleId > 0 && vehicleId !== qAutoVeh) {
+    qAutoVeh = vehicleId;
+    const m = qCars.find(c => c.vehicle_id === vehicleId && !Number(c.invoices));
+    if (m) { qTicket = m.id; toast(`Tersambung ke antrian ${esc(m.code)}.`); }
+  }
   el.innerHTML = `<span class="lbl">Antrian:</span>` + qCars.map(c => `<button class="${c.id === qTicket ? "on" : ""}" onclick="pickQueueCar(${c.id})"
-    title="${esc((c.mechanics || "belum ada mekanik") + (c.day !== qCars[0].day ? " · kemarin" : ""))}">${st[c.status] || ""} ${esc(c.code)} · ${esc(c.plate)}</button>`).join("");
+    style="${Number(c.invoices) && c.id !== qTicket ? "opacity:.5" : ""}"
+    title="${esc((c.mechanics || "belum ada mekanik") + (c.day !== qCars[0].day ? " · kemarin" : "") + (Number(c.invoices) ? " · sudah " + c.invoices + " invoice" : ""))}">${st[c.status] || ""} ${esc(c.code)} · ${esc(c.plate)}${Number(c.invoices) ? " · ✓inv" : ""}</button>`).join("");
   el.classList.remove("hide");
 }
 async function pickQueueCar(id) {
   if (qTicket === id) { qTicket = null; renderQueueStrip(); return; }
-  const c = qCars.find(x => x.id === id); qTicket = id; renderQueueStrip();
+  const c = qCars.find(x => x.id === id); qTicket = id; qAutoVeh = c.vehicle_id; renderQueueStrip();
+  if (c.vehicle_id) {   // checked in with a known car: customer + car straight away
+    const { data: v } = await sb.from("vehicles").select("id, customers(*)").eq("id", c.vehicle_id).single();
+    if (v && v.customers) { await setCustomer(v.customers, v.id); toast(`${esc(c.code)}: ${esc(v.customers.name)} · ${esc(c.plate)}`); renderQueueStrip(); return; }
+  }
   const { data } = await sb.from("vehicles").select("id,plate,color,customer_id,customers!inner(*),car_models(brand,model)")
     .eq("is_active", true).eq("customers.is_active", true).eq("plate_key", c.plate_key).limit(5);
   if (data && data.length === 1) { setCustomer(data[0].customers, data[0].id); toast(`${c.code}: ${esc(data[0].customers.name)} · ${esc(c.plate)}`); }
@@ -614,7 +625,7 @@ async function pickQueueCar(id) {
 }
 
 function newInvoice() {
-  sale = null; cart = []; editing = -1; method = "bayar"; payLines = []; payDue = null; qTicket = null;
+  sale = null; cart = []; editing = -1; method = "bayar"; payLines = []; payDue = null; qTicket = null; qAutoVeh = null;
   setCustomer(null);
   $("q").value = ""; renderGrid();
 }
@@ -780,16 +791,19 @@ function saveNew(payAndPrint) {
   if (!cust || !vehicleId) { toast("Pilih pelanggan dan kendaraan (atau \"Tanpa mobil\") dulu.", "err"); return; }
   guard(async () => {
     const pay = method === "tempo" ? [] : payPayload();
-    const { data: s, error } = await sb.rpc("create_sale", {
-      p_customer: cust.id, p_vehicle: vehicleId === NO_CAR ? null : vehicleId, p_plate: null,
-      p_items: itemsPayload(), p_tempo: method === "tempo"
-    });
+    const args = { p_customer: cust.id, p_vehicle: vehicleId === NO_CAR ? null : vehicleId, p_plate: null,
+      p_items: itemsPayload(), p_tempo: method === "tempo", p_ticket: qTicket, p_no_queue_reason: null };
+    let { data: s, error } = await sb.rpc("create_sale_q", args);
+    // jasa without a queue car: the database asks for a reason (or pick the car from the Antrian strip)
+    if (error && /pilih mobilnya dari Antrian/.test(error.message)) {
+      const why = prompt("Ada jasa di invoice ini, tapi belum pilih mobil dari Antrian (strip di atas pelanggan).\n\nBatal = kembali dan pilih mobilnya.\nAtau tulis alasan kenapa tanpa antrian (muncul di Tinjauan owner):");
+      if (!why || !why.trim()) return;
+      args.p_no_queue_reason = why.trim();
+      ({ data: s, error } = await sb.rpc("create_sale_q", args));
+    }
     if (error) throw error;
     let msg = `Tersimpan · <b>${s.invoice_no}</b> · ${rp(s.total)}`;
-    if (qTicket) {
-      const q = qCars.find(x => x.id === qTicket), lk = await sb.rpc("q_link_sale", { p_ticket: qTicket, p_sale: s.id });
-      msg += lk.error ? ` · <span style="color:#fca5a5">antrian tidak tersambung: ${esc(lk.error.message)}</span>` : ` · antrian ${esc(q ? q.code : "")}`;
-    }
+    if (qTicket) { const q = qCars.find(x => x.id === qTicket); msg += ` · antrian ${esc(q ? q.code : "")}`; }
     if (payAndPrint && pay.length) {
       const p = await sb.rpc("pay_sale_multi", { p_sale: s.id, p_lines: pay });
       if (p.error) { toast(`Invoice ${s.invoice_no} tersimpan, tapi pembayaran GAGAL: ${esc(p.error.message)}. Buka di Transaksi tertunda.`, "err"); afterSave(); return; }

@@ -77,6 +77,9 @@
       <label class="row small" style="margin:0"><input type="checkbox" id="pinactive" style="width:auto" onchange="renderProducts()"> nonaktif</label>
       <label class="row small" style="margin:0;color:var(--red)" title="Barang dengan harga bertingkat yang harga qty terbesarnya tidak sama dengan harga beli terakhir"><input type="checkbox" id="pmism" style="width:auto" onchange="renderProducts()"> ⚠ grosir ≠ harga beli <span id="pmismN"></span></label>
       <span class="grow"></span>
+      <button class="owner-only" onclick="xlsDownload()" title="Download harga barang yang sedang tampil (sesuai filter)">⬇ Excel harga</button>
+      <button class="owner-only" onclick="$('xlsFile').click()">⬆ Upload Excel</button>
+      <input type="file" id="xlsFile" accept=".xlsx,.xls" class="hide" onchange="xlsUpload(this)">
       <button class="primary owner-only" onclick="editProduct(null)">+ Produk baru</button>
     </div>
     <div class="bar">
@@ -183,7 +186,7 @@
   <div class="page hide" id="p-pelanggan">
     <div class="bar"><input id="cq" placeholder="Cari nama / HP / plat…"><button onclick="searchCustomers()">Cari</button></div>
     <div class="panel"><table>
-      <thead><tr><th>Nama</th><th>HP</th><th>Kendaraan</th><th>Daftar harga</th><th>Tempo</th></tr></thead>
+      <thead><tr><th>Nama</th><th>HP</th><th>Kendaraan</th><th>Daftar harga</th><th>Tempo</th><th>Toko</th></tr></thead>
       <tbody id="ctable"><tr><td colspan="5" class="muted">Cari pelanggan untuk mengatur daftar harga & izin tempo.</td></tr></tbody></table></div>
   </div>
 
@@ -245,6 +248,10 @@
         <div class="field"><label>Isi per dus (info saja)</label><input id="pmDus" inputmode="numeric"></div>
         <div class="field"><label>Status</label><select id="pmActive"><option value="1">Aktif</option><option value="0">Nonaktif</option></select></div>
       </div>
+      <div class="field" id="pmCostBox" style="background:var(--page);border:1px solid var(--border);border-radius:8px;padding:10px 12px">
+        <label>Harga beli per pcs <span class="tiny muted">— dari Central Motor / supplier. Otomatis berubah tiap ada Pembelian dengan harga lain.</span></label>
+        <input id="pmCost" inputmode="numeric" placeholder="belum ada" oninput="this.value=num(parseRp(this.value));renderTiers()" style="max-width:220px">
+      </div>
       <div id="pmTiers"></div>
       <div class="err" id="pmErr"></div>
     </div>
@@ -266,7 +273,10 @@
         <div class="field"><label>Daftar harga</label><select id="cmList"></select></div>
         <div class="field"><label>Boleh tempo?</label><select id="cmTempo"><option value="0">Tidak</option><option value="1">Ya</option></select></div>
       </div>
-      <div class="field"><label>Status</label><select id="cmActive"><option value="1">Aktif</option><option value="0">Nonaktif</option></select></div>
+      <div class="grid2">
+        <div class="field"><label>Status</label><select id="cmActive"><option value="1">Aktif</option><option value="0">Nonaktif</option></select></div>
+        <div class="field"><label>Toko (grosir)? <span class="tiny muted">admin boleh turunkan harga sampai harga beli</span></label><select id="cmToko"><option value="0">Tidak</option><option value="1">Ya — toko/bengkel lain</option></select></div>
+      </div>
       <div class="listhead">Kendaraan</div>
       <div id="cmVeh" class="small"></div>
       <div class="err" id="cmErr"></div>
@@ -368,13 +378,18 @@
   <header><h3 id="jbTitle">—</h3><button onclick="closeModal('jobsModal')">Tutup</button></header>
   <div class="body" style="padding:0"><table><thead><tr><th>Tanggal</th><th>No</th><th>Plat</th><th>Jalur</th><th>Mulai</th><th>Selesai</th><th class="num">Kerja</th><th class="num">Beli barang</th><th>Tim</th><th>Invoice</th><th class="num">Total invoice</th></tr></thead><tbody id="jbtable"></tbody></table></div>
 </div></div>
+<div class="overlay" id="xlsModal"><div class="modal" style="width:1100px">
+  <header><h3 id="xlsTitle">Cek perubahan harga</h3><button onclick="closeModal('xlsModal')">Tutup</button></header>
+  <div class="body" style="padding:0;max-height:65vh;overflow:auto"><table><thead><tr><th>SKU</th><th>Barang</th><th class="num">Harga beli</th><th>Harga Umum lama</th><th>Harga Umum baru</th><th>Cek</th></tr></thead><tbody id="xlsTable"></tbody></table></div>
+  <footer><span class="small" id="xlsSum" style="margin-right:auto"></span><button onclick="closeModal('xlsModal')">Batal</button><button class="primary" id="xlsApply" onclick="xlsApply()">Terapkan</button></footer>
+</div></div>
 <div id="toast"></div>
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="config.js"></script>
 <script src="common.js"></script>
 <script>
-let cats = [], products = [], tiers = {}, stock = {}, lists = [], locations = [], stats = {}, lastCost = {}, suppliers = [];
+let cats = [], products = [], tiers = {}, stock = {}, lists = [], locations = [], stats = {}, lastCost = {}, costs = {}, suppliers = [];
 let defaultList = null, kind = "barang", showList = null, sortKey = "name", sortDir = 1;
 const todayJkt = () => new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Jakarta" });
 const closeModal = id => $(id).classList.remove("open");
@@ -421,7 +436,7 @@ function tab(name) {
 
 async function loadAll() {
   const L = ME.location_id;
-  const [c, p, t, s, l, loc, st, lc, sp] = await Promise.all([
+  const [c, p, t, s, l, loc, st, lc, sp, pc] = await Promise.all([
     sb.from("categories").select("*").order("sort"),
     fetchAll(() => sb.from("products").select("*").order("name")),
     fetchAll(() => sb.from("price_tiers").select("*").order("id")),
@@ -430,7 +445,8 @@ async function loadAll() {
     sb.from("locations").select("*").order("id"),
     fetchAll(() => sb.from("product_sales_stats").select("*").eq("location_id", L).order("product_id")),
     fetchAll(() => sb.from("product_last_cost").select("*").eq("location_id", L).order("product_id")),
-    sb.from("suppliers").select("*").order("name")
+    sb.from("suppliers").select("*").order("name"),
+    fetchAll(() => sb.from("product_costs").select("product_id,purchase_price").order("product_id"))
   ]);
   for (const r of [c, l, loc, sp]) if (r.error) throw r.error;
   cats = c.data; products = p; lists = l.data; locations = loc.data; suppliers = sp.data;
@@ -440,6 +456,7 @@ async function loadAll() {
   stock = {}; s.forEach(r => stock[r.product_id] = Number(r.qty));
   stats = {}; st.forEach(r => stats[r.product_id] = r);
   lastCost = {}; lc.forEach(r => lastCost[r.product_id] = Number(r.unit_cost));
+  costs = {}; (pc || []).forEach(r => costs[r.product_id] = Number(r.purchase_price));
   $("pmCat").innerHTML = cats.map(x => `<option value="${x.id}">${esc(x.name)} (${x.code})</option>`).join("");
   $("ocat").innerHTML = `<option value="">Semua kategori</option>` + cats.map(x => `<option value="${x.id}">${esc(x.name)}</option>`).join("");
   $("groupList").innerHTML = [...new Set(products.filter(x => x.service_group).map(x => x.service_group))].sort().map(g => `<option value="${esc(g)}">`).join("");
@@ -491,8 +508,8 @@ function renderProducts() {
   const price1 = pid => { const r = (tiers[pid] || []).filter(t => t.price_list_id === showList && Number(t.min_qty) === 1)[0]; return r ? Number(r.price) : null; };
   const val = (p, k) => ({ name: p.name, sku: p.sku, price: price1(p.id) ?? -1, stock: stock[p.id] || 0,
     total: Number(stats[p.id]?.sold_total || 0), avg3: Number(stats[p.id]?.avg_3_months || 0),
-    last: Number(stats[p.id]?.sold_last_month || 0), cost: lastCost[p.id] ?? -1, group: p.service_group || "" })[k];
-  const mism = p => { const g = !p.is_service && grosirTier(p.id), c = lastCost[p.id]; return g && c != null && g.price !== c ? { g, c } : null; };
+    last: Number(stats[p.id]?.sold_last_month || 0), cost: costOf(p.id) ?? -1, group: p.service_group || "" })[k];
+  const mism = p => { const g = !p.is_service && grosirTier(p.id), c = costOf(p.id); return g && c != null && g.price !== c ? { g, c } : null; };
   const nm = products.filter(p => p.is_active && mism(p)).length;
   $("pmismN").textContent = nm ? `(${nm})` : "(0)";
   const onlyMism = $("pmism").checked;
@@ -500,6 +517,7 @@ function renderProducts() {
     (!f || (f[0] === "c" ? p.category_id === Number(f.slice(1)) : p.service_group === f.slice(1))) &&
     (!term || (p.name + " " + p.sku + " " + (p.barcode || "") + " " + (p.brand || "")).toLowerCase().includes(term)));
   list.sort((a, b) => { const x = val(a, sortKey), y = val(b, sortKey); return (x > y ? 1 : x < y ? -1 : 0) * sortDir; });
+  prodFiltered = list;
   list = list.slice(0, 400);
   const lname = (lists.find(l => l.id === showList) || {}).name;
   const cols = isJ
@@ -515,7 +533,7 @@ function renderProducts() {
     const cells = isJ
       ? [esc(p.sku), `<b>${esc(p.name)}</b>${p.is_active ? "" : " (nonaktif)"}`, esc(p.service_group || ""), pr, qty(st?.sold_total), qty(st?.avg_3_months), qty(st?.sold_last_month)]
       : [esc(p.sku), `<b>${esc(p.name)}</b>${p.is_active ? "" : " (nonaktif)"}<div class="tiny muted">${esc(catName(p.category_id))}${p.brand ? " · " + esc(p.brand) : ""}${p.isi_per_dus ? " · isi " + p.isi_per_dus + "/dus" : ""}</div>`,
-         pr + ((m => m ? `<div class="tiny" style="color:var(--red);font-weight:600">⚠ ${m.g.min_qty}+ = ${num(m.g.price)}, beli terakhir ${num(m.c)}</div>` : "")(mism(p))),
+         pr + ((m => m ? `<div class="tiny" style="color:var(--red);font-weight:600">⚠ ${m.g.min_qty}+ = ${num(m.g.price)}, harga beli ${num(m.c)}</div>` : "")(mism(p))),
          `<span style="${(stock[p.id] || 0) < 0 ? "color:var(--red);font-weight:600" : ""}">${num(stock[p.id] || 0)} pcs</span>`, qty(st?.sold_total), qty(st?.avg_3_months), qty(st?.sold_last_month)];
     return `<tr class="click ${p.is_active ? "" : "off"}" onclick="editProduct(${p.id})">` +
       cells.map((c, i) => `<td class="${numCols.includes(cols[i][0]) ? "num" : ""}">${c}</td>`).join("") + "</tr>";
@@ -526,10 +544,11 @@ function pmKindChanged() {
   const j = $("pmService").value === "1";
   $("pmCatBox").classList.toggle("hide", j); $("pmGroupBox").classList.toggle("hide", !j);
   $("pmDus").closest(".field").classList.toggle("hide", j);
+  $("pmCostBox").classList.toggle("hide", j);
   suggestSku();
 }
 
-let editingProduct = null, draftTiers = {};
+let editingProduct = null, draftTiers = {}, prodFiltered = [];
 function editProduct(id) {
   editingProduct = id ? products.find(p => p.id === id) : null;
   const p = editingProduct || { category_id: (cats.find(c => "c" + c.id === $("pcat").value) || cats[0]).id, is_service: kind === "jasa", is_active: true,
@@ -547,6 +566,7 @@ function editProduct(id) {
   $("pmService").disabled = !!id;   // goods ↔ service can't flip once created (stock history)
   pmKindChanged();
   $("pmSave").classList.toggle("hide", !own); if (!own) $("pmDelete").classList.add("hide");
+  $("pmCost").value = id && costOf(id) != null ? num(costOf(id)) : "";
   draftTiers = {};
   lists.filter(l => l.is_active).forEach(l => draftTiers[l.id] = (tiers[id] || []).filter(t => t.price_list_id === l.id)
     .sort((a, b) => a.min_qty - b.min_qty).map(t => ({ id: t.id, min_qty: Number(t.min_qty), price: Number(t.price) })));
@@ -570,10 +590,22 @@ function renderTiers() {
       <button class="small" onclick="addTier(${l.id})">+ tingkat</button></div>
     <table class="tiers">${draftTiers[l.id].map((t, i) => `<tr>
       <td style="width:150px"><label>Mulai qty</label><input value="${t.min_qty}" inputmode="decimal" onchange="draftTiers[${l.id}][${i}].min_qty=Number(this.value.replace(',','.'))"></td>
-      <td><label>Harga satuan</label><input value="${num(t.price)}" inputmode="numeric" oninput="this.value=num(parseRp(this.value))" onchange="draftTiers[${l.id}][${i}].price=parseRp(this.value)"></td>
+      <td><label>Harga satuan</label><input value="${num(t.price)}" inputmode="numeric" oninput="this.value=num(parseRp(this.value))" onchange="draftTiers[${l.id}][${i}].price=parseRp(this.value);renderTiers()"></td>
+      <td style="width:150px;vertical-align:bottom;padding-bottom:10px" class="small">${tierMargin(l, t)}</td>
       <td style="width:60px;vertical-align:bottom"><button class="link danger small" onclick="draftTiers[${l.id}].splice(${i},1);renderTiers()">hapus</button></td></tr>`).join("")
       || `<tr><td class="small muted">Belum ada.</td></tr>`}</table>`).join("");
   if (ME.role !== "owner") $("prodModal").querySelectorAll(".body input, .body select, .body button").forEach(e => e.disabled = true);
+}
+// margin shown next to each tier; for oils etc. the biggest-qty Umum tier must equal harga beli
+function tierMargin(l, t) {
+  const c = parseRp($("pmCost").value || "");
+  if ($("pmService").value === "1" || !c || !t.price) return "";
+  const m = (t.price - c) / t.price * 100;
+  const rows = draftTiers[l.id], top = rows.length >= 2 && t.min_qty === Math.max(...rows.map(r => r.min_qty));
+  const cat = cats.find(x => x.id === Number($("pmCat").value));
+  if (l.is_default && top && !(cat && cat.code === "BAN") && t.price !== c)
+    return `<b style="color:var(--red)">≠ harga beli ${num(c)}</b>`;
+  return `<span style="color:${m < 0 ? "var(--red)" : m < 5 ? "var(--warn-text)" : "var(--muted)"}">untung ${num(t.price - c)} · ${m.toFixed(1)}%</span>`;
 }
 function addTier(lid) {
   const rows = draftTiers[lid];
@@ -602,8 +634,9 @@ async function saveProduct() {
   const def = draftTiers[defaultList];
   if (!def.some(r => r.min_qty === 1)) { err.textContent = "Harga Umum wajib punya tingkat mulai qty 1."; return; }
   if (def.some(r => r.price === 0) && !confirm("Ada harga Umum Rp 0. Benar?")) return;
-  const gt = !row.is_service && grosirTier(null, def, row.category_id), lc = editingProduct && lastCost[editingProduct.id];
-  if (gt && lc && gt.price !== lc && !confirm(`⚠ HARGA ${gt.min_qty}+ ≠ HARGA BELI\n\nHarga ${gt.min_qty}+ : ${num(gt.price)}\nHarga beli terakhir : ${num(lc)}\n\nUntuk oli/cairan dari Central Motor, keduanya harus SAMA.\nKalau harga dari Central Motor berubah, pastikan Pembelian berikutnya diisi harga baru.\n\nOK = tetap simpan · Batal = kembali`)) return;
+  const costTxt = $("pmCost").value.trim(), newCost = costTxt === "" ? null : parseRp(costTxt);
+  const gt = !row.is_service && grosirTier(null, def, row.category_id);
+  if (gt && newCost != null && gt.price !== newCost && !confirm(`⚠ HARGA ${gt.min_qty}+ ≠ HARGA BELI\n\nHarga ${gt.min_qty}+ : ${num(gt.price)}\nHarga beli : ${num(newCost)}\n\nUntuk oli/cairan dari Central Motor, keduanya harus SAMA.\nSudah cek harga beli DAN harga jualnya?\n\nOK = tetap simpan · Batal = kembali`)) return;
 
   $("pmSave").disabled = true;
   try {
@@ -636,11 +669,118 @@ async function saveProduct() {
         if (error) throw error;
       }
     }
+    if (!row.is_service && newCost != null && newCost !== costs[pid]) {
+      const { error } = await sb.from("product_costs").upsert({ product_id: pid, purchase_price: newCost, updated_at: new Date().toISOString(), updated_by: ME.id });
+      if (error) throw error;
+    }
     closeModal("prodModal");
     toast("Produk tersimpan.");
     await loadAll();
   } catch (e) { err.textContent = "Gagal simpan: " + errText(e); }
   finally { $("pmSave").disabled = false; }
+}
+
+// ═══════════ EXCEL: download prices, edit in Excel, upload, check, apply ═══════════
+const XLS_MAX = 4;   // tiers in the file: qty 1 + 3 more
+let xlsRows = [];
+function loadXlsx() {
+  if (window.XLSX) return Promise.resolve();
+  return new Promise((ok, bad) => { const sc = document.createElement("script");
+    sc.src = "https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js"; sc.onload = ok;
+    sc.onerror = () => bad(new Error("Gagal memuat pembaca Excel (cek internet).")); document.head.appendChild(sc); });
+}
+const umumTiers = pid => (tiers[pid] || []).filter(t => t.price_list_id === defaultList).map(t => ({ min_qty: Number(t.min_qty), price: Number(t.price) })).sort((a, b) => a.min_qty - b.min_qty);
+const tierTxt = ts => ts.length ? ts.map(t => `${t.min_qty}+ : ${num(t.price)}`).join(" · ") : "—";
+async function xlsDownload() {
+  try { await loadXlsx(); } catch (e) { toast(esc(e.message), "err"); return; }
+  const head = ["SKU", "Nama", "Merk", "Harga beli"]; head.push("Harga qty 1");
+  for (let k = 2; k <= XLS_MAX; k++) head.push(`Qty tingkat ${k}`, `Harga tingkat ${k}`);
+  const rows = prodFiltered.map(p => {
+    const ts = umumTiers(p.id), one = ts.find(t => t.min_qty === 1), rest = ts.filter(t => t.min_qty !== 1);
+    const r = [p.sku, p.name, p.brand || "", p.is_service ? "" : (costOf(p.id) ?? ""), one ? one.price : ""];
+    for (let k = 0; k < XLS_MAX - 1; k++) r.push(rest[k] ? rest[k].min_qty : "", rest[k] ? rest[k].price : "");
+    return r;
+  });
+  const ws = XLSX.utils.aoa_to_sheet([head, ...rows]);
+  ws["!cols"] = [{ wch: 14 }, { wch: 44 }, { wch: 14 }, ...Array(head.length - 3).fill({ wch: 14 })];
+  const help = XLSX.utils.aoa_to_sheet([["Cara pakai"], ["1. Ubah kolom Harga beli dan/atau harga di sheet Harga. Boleh pakai rumus Excel."],
+    ["2. Jangan ubah kolom SKU. Nama & Merk hanya info (tidak dipakai saat upload)."],
+    ["3. Harga beli kosong = tidak diubah. Semua kolom harga kosong = harga tidak diubah."],
+    ["4. Hapus baris yang tidak perlu diubah boleh saja."],
+    ["5. Simpan sebagai .xlsx, lalu Admin → Produk & harga → Upload Excel. Semua perubahan dicek dulu sebelum diterapkan."],
+    ["Hanya daftar harga Umum. Daftar harga lain diatur per produk."]]);
+  const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, ws, "Harga"); XLSX.utils.book_append_sheet(wb, help, "Cara pakai");
+  XLSX.writeFile(wb, `harga_${kind}_${todayJkt()}.xlsx`);
+}
+async function xlsUpload(input) {
+  const f = input.files[0]; input.value = ""; if (!f) return;
+  try { await loadXlsx(); } catch (e) { toast(esc(e.message), "err"); return; }
+  let aoa;
+  try { const wb = XLSX.read(await f.arrayBuffer()); aoa = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { header: 1, raw: true, defval: "" }); }
+  catch (e) { toast("File tidak bisa dibaca sebagai Excel: " + esc(e.message), "err"); return; }
+  const head = (aoa[0] || []).map(h => String(h).trim().toLowerCase()), col = name => head.indexOf(name.toLowerCase());
+  if (col("SKU") < 0 || col("Harga qty 1") < 0) { toast('Kolom "SKU" / "Harga qty 1" tidak ditemukan. Pakai file dari tombol ⬇ Excel harga.', "err", 6000); return; }
+  const n = v => { if (v === "" || v == null) return null; if (typeof v === "number") return v; const x = parseRp(String(v)); return isNaN(x) ? NaN : x; };
+  const bySku = {}; products.forEach(p => bySku[p.sku.toUpperCase()] = p);
+  xlsRows = [];
+  aoa.slice(1).forEach((r, i) => {
+    const sku = String(r[col("SKU")] || "").trim(); if (!sku) return;
+    const row = { line: i + 2, sku, p: bySku[sku.toUpperCase()], errs: [], warns: [] };
+    if (!row.p) { row.errs.push(`SKU ${sku} tidak ada`); xlsRows.push(row); return; }
+    const cost = col("Harga beli") >= 0 ? n(r[col("Harga beli")]) : null;
+    if (Number.isNaN(cost)) row.errs.push("harga beli bukan angka");
+    const tl = [], one = n(r[col("Harga qty 1")]);
+    if (one != null) tl.push({ min_qty: 1, price: one });
+    for (let k = 2; k <= XLS_MAX; k++) {
+      const qi = col(`Qty tingkat ${k}`), pi = col(`Harga tingkat ${k}`); if (qi < 0 || pi < 0) continue;
+      const q = n(r[qi]), pr = n(r[pi]);
+      if (q == null && pr == null) continue;
+      if (q == null || pr == null) { row.errs.push(`tingkat ${k}: qty dan harga harus diisi dua-duanya`); continue; }
+      tl.push({ min_qty: q, price: pr });
+    }
+    if (tl.some(t => Number.isNaN(t.min_qty) || Number.isNaN(t.price))) row.errs.push("ada harga/qty bukan angka");
+    if (tl.length && !tl.some(t => t.min_qty === 1)) row.errs.push("harga qty 1 wajib kalau harga diisi");
+    if (new Set(tl.map(t => t.min_qty)).size !== tl.length) row.errs.push("qty tingkat sama dua kali");
+    tl.sort((a, b) => a.min_qty - b.min_qty);
+    const old = umumTiers(row.p.id), oldCost = costOf(row.p.id);
+    row.oldTiers = old; row.oldCost = oldCost;
+    row.cost = cost != null && !row.p.is_service && cost !== oldCost ? cost : null;
+    row.tiers = tl.length && JSON.stringify(tl) !== JSON.stringify(old) ? tl : null;
+    if (cost != null && row.p.is_service) row.warns.push("jasa tidak punya harga beli — diabaikan");
+    const effCost = row.cost ?? oldCost, effT = row.tiers || old;
+    if (row.tiers && old.length) {
+      const o1 = (old.find(t => t.min_qty === 1) || {}).price, n1 = (row.tiers.find(t => t.min_qty === 1) || {}).price;
+      if (o1 && n1 && Math.abs(n1 - o1) / o1 > 0.2) row.warns.push(`harga qty 1 berubah ${((n1 - o1) / o1 * 100).toFixed(0)}%`);
+    }
+    if (row.cost != null && oldCost && Math.abs(row.cost - oldCost) / oldCost > 0.2) row.warns.push(`harga beli berubah ${((row.cost - oldCost) / oldCost * 100).toFixed(0)}%`);
+    if (effCost != null && effT.some(t => t.price < effCost)) row.warns.push("ada harga jual di bawah harga beli");
+    const g = grosirTier(row.p.id, effT);
+    if (g && effCost != null && g.price !== effCost) row.warns.push(`harga ${g.min_qty}+ (${num(g.price)}) ≠ harga beli (${num(effCost)})`);
+    if (row.errs.length || row.cost != null || row.tiers) xlsRows.push(row);
+  });
+  const errs = xlsRows.filter(r => r.errs.length).length, ch = xlsRows.filter(r => !r.errs.length).length;
+  $("xlsTitle").textContent = `Cek perubahan — ${f.name}`;
+  $("xlsTable").innerHTML = xlsRows.map(r => `<tr style="${r.errs.length ? "background:var(--red-soft)" : r.warns.length ? "background:var(--warn-bg)" : ""}">
+    <td>${esc(r.sku)}<div class="tiny muted">baris ${r.line}</div></td><td>${r.p ? esc(r.p.name) : ""}</td>
+    <td class="num">${r.cost != null ? `${r.oldCost != null ? num(r.oldCost) : "—"} → <b>${num(r.cost)}</b>` : r.p && r.oldCost != null ? `<span class="muted">${num(r.oldCost)}</span>` : ""}</td>
+    <td class="small">${r.p ? (r.tiers ? tierTxt(r.oldTiers) : `<span class="muted">${tierTxt(r.oldTiers)}</span>`) : ""}</td>
+    <td class="small">${r.tiers ? `<b>${tierTxt(r.tiers)}</b>` : r.p ? '<span class="muted">tidak berubah</span>' : ""}</td>
+    <td class="small">${r.errs.map(e => `<div style="color:var(--red)">✕ ${esc(e)}</div>`).join("")}${r.warns.map(w => `<div style="color:var(--warn-text)">⚠ ${esc(w)}</div>`).join("")}</td></tr>`).join("")
+    || `<tr><td colspan="6" class="muted">Tidak ada perubahan di file ini.</td></tr>`;
+  $("xlsSum").innerHTML = errs ? `<b style="color:var(--red)">${errs} baris salah — perbaiki di Excel lalu upload lagi.</b> Tidak ada yang diterapkan.`
+    : `${ch} barang berubah · ${xlsRows.filter(r => r.warns.length).length} perlu dicek (kuning).`;
+  $("xlsApply").disabled = !!errs || !ch;
+  $("xlsModal").classList.add("open");
+}
+async function xlsApply() {
+  const rows = xlsRows.filter(r => !r.errs.length).map(r => ({ sku: r.p.sku, purchase_price: r.cost, tiers: r.tiers }));
+  const warn = xlsRows.filter(r => r.warns.length).length;
+  if (warn && !confirm(`${warn} barang ada tanda kuning. Sudah dicek semua? Terapkan ${rows.length} perubahan?`)) return;
+  $("xlsApply").disabled = true;
+  const { data, error } = await sb.rpc("bulk_set_prices", { p_rows: rows });
+  $("xlsApply").disabled = false;
+  if (error) { toast("Tidak ada yang diterapkan: " + esc(error.message), "err", 7000); return; }
+  closeModal("xlsModal"); toast(`${data} barang diperbarui. Semua perubahan tercatat di Tinjauan.`); await loadAll();
 }
 
 async function deleteProduct() {
@@ -773,6 +913,8 @@ function openPurchase(orig) {
 
 // Rule (oils etc., not tyres): if a product has quantity tiers in the Umum list, the highest-qty tier price
 // (the price other shops pay) must equal the purchase price. Returns that tier, or null when no tiers.
+// harga beli: the product's purchase price (owner-set / Excel / last Pembelian), else this branch's last purchase
+const costOf = pid => costs[pid] ?? lastCost[pid] ?? null;
 function grosirTier(pid, rows, catId) {
   const cat = cats.find(c => c.id === (catId !== undefined ? catId : (products.find(x => x.id === pid) || {}).category_id));
   if (cat && cat.code === "BAN") return null;          // tyres: cost differs from grosir by design (cases 1 & 2)
@@ -795,7 +937,7 @@ function puSuggest(i) {
 }
 function puPick(i, pid) {
   const p = products.find(x => x.id === pid); puLines[i].label = p.sku + " · " + p.name;
-  if (!puLines[i].cost && lastCost[pid]) puLines[i].cost = lastCost[pid];
+  if (!puLines[i].cost && costOf(pid) != null) puLines[i].cost = costOf(pid);
   renderPuLines(); setTimeout(() => document.querySelectorAll("#puLines tr")[i]?.querySelectorAll("input")[1]?.focus(), 0);
 }
 function puHide(i) { $("puRes" + i)?.classList.add("hide"); }
@@ -835,6 +977,7 @@ function puCalc() {
     const last = lastCost[p.id], bits = [`stok ${num(stock[p.id] || 0)}`];
     if (p.isi_per_dus) bits.push(`isi ${p.isi_per_dus}/dus — qty dalam PCS`);
     if (last) bits.push(`beli terakhir ${num(last)}/pcs`);
+    if (costs[p.id] != null && costs[p.id] !== last) bits.push(`harga beli produk ${num(costs[p.id])}`);
     const g = grosirTier(p.id);
     if (g) bits.push(`harga ${g.min_qty}+ = ${num(g.price)}`);
     let warn = "";
@@ -1193,7 +1336,7 @@ async function searchCustomers(latest) {
     <td><b>${esc(c.name)}</b>${c.is_active ? "" : " (nonaktif)"}</td><td>${esc(c.phone || "")}${c.phone && c.address ? "" : ' <span class="small" style="color:var(--red)">data kurang</span>'}</td>
     <td>${c.vehicles.map(v => esc(v.plate) + (v.color ? "" : ' <span style="color:var(--red)">(warna?)</span>')).join(", ")}</td>
     <td>${esc((lists.find(l => l.id === c.price_list_id) || { name: "Umum" }).name)}</td>
-    <td>${c.allow_tempo ? '<span class="badge b-tempo">Ya</span>' : ""}</td></tr>`).join("")
+    <td>${c.allow_tempo ? '<span class="badge b-tempo">Ya</span>' : ""}</td><td>${c.is_toko ? '<span class="badge b-tempo">Toko</span>' : ""}</td></tr>`).join("")
     || `<tr><td colspan="5" class="muted">Tidak ditemukan.</td></tr>`);
 }
 
@@ -1204,7 +1347,8 @@ function editCustomer(i) {
   $("cmList").innerHTML = `<option value="">Umum (standar)</option>` + lists.filter(l => !l.is_default && (l.is_active || l.id === c.price_list_id))
     .map(l => `<option value="${l.id}">${esc(l.name)}${l.is_active ? "" : " (arsip — pakai harga Umum)"}</option>`).join("");
   $("cmList").value = c.price_list_id || ""; $("cmTempo").value = c.allow_tempo ? "1" : "0"; $("cmActive").value = c.is_active ? "1" : "0";
-  $("cmList").disabled = $("cmTempo").disabled = ME.role !== "owner";
+  $("cmToko").value = c.is_toko ? "1" : "0";
+  $("cmList").disabled = $("cmTempo").disabled = $("cmToko").disabled = ME.role !== "owner";
   $("cmVeh").innerHTML = c.vehicles.length ? c.vehicles.map(v => `<div class="row" style="padding:4px 0">
       <span class="grow">${esc(v.plate)} · ${esc(v.car_models ? v.car_models.brand + " " + v.car_models.model : "-")}${v.is_active ? "" : " (nonaktif)"}</span>
       <input style="width:120px;padding:5px 8px" placeholder="warna *" value="${esc(v.color || "")}" onchange="setVehColor(${v.id}, this.value)">
@@ -1232,7 +1376,7 @@ async function setVehColor(id, color) {
 async function saveCustomer() {
   const row = { name: $("cmName").value.trim().toUpperCase(), phone: $("cmPhone").value.trim() || null,
     address: $("cmAddr").value.trim() || null, price_list_id: Number($("cmList").value) || null,
-    allow_tempo: $("cmTempo").value === "1", is_active: $("cmActive").value === "1" };
+    allow_tempo: $("cmTempo").value === "1", is_toko: $("cmToko").value === "1", is_active: $("cmActive").value === "1" };
   const need = [!row.name && "nama", !row.phone && "HP", !row.address && "alamat"].filter(Boolean);
   if (need.length) { $("cmErr").textContent = "Wajib diisi: " + need.join(", ") + ". Kalau pelanggan tidak mau memberi, isi \"-\"."; return; }
   const { error } = await sb.from("customers").update(row).eq("id", editingCust.id);
@@ -1243,8 +1387,8 @@ async function saveCustomer() {
 // ═══════════ REVIEW ═══════════
 async function loadReview() {
   const args = { p_from: $("rfrom").value, p_to: $("rto").value };
-  const [a, b, c, d] = await Promise.all([sb.rpc("review_list", args), sb.rpc("review_extra", args), sb.rpc("review_prices", args), sb.rpc("review_cost_check", args)]);
-  const error = a.error || b.error || c.error || d.error, data = error ? null : (a.data || []).concat(b.data || [], c.data || [], d.data || []).sort((x, y) => (y.at || "9") > (x.at || "9") ? 1 : -1);
+  const [a, b, c, d, e] = await Promise.all([sb.rpc("review_list", args), sb.rpc("review_extra", args), sb.rpc("review_prices", args), sb.rpc("review_cost_check", args), sb.rpc("review_more", args)]);
+  const error = a.error || b.error || c.error || d.error || e.error, data = error ? null : (a.data || []).concat(b.data || [], c.data || [], d.data || [], e.data || []).sort((x, y) => (y.at || "9") > (x.at || "9") ? 1 : -1);
   if (error) { $("rtable").innerHTML = `<tr><td colspan="6" class="err">${esc(error.message)}</td></tr>`; return; }
   $("rtable").innerHTML = data.map(r => `<tr><td class="small">${r.at ? new Date(r.at).toLocaleString("id-ID", { timeZone: "Asia/Jakarta" }) : ""}</td>
     <td><b>${esc(r.kind)}</b></td><td>${esc(r.invoice || "")}</td><td>${esc(r.who || "")}</td><td>${esc(r.detail)}</td>

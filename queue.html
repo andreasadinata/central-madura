@@ -79,14 +79,14 @@
     <div id="jumatanBar" class="jumatan hide">🕌 Jumatan 11:00–12:30 — semua mekanik istirahat, tidak ada tanda lambat.</div>
 
     <div class="card"><div class="in row" style="flex-wrap:wrap">
-      <input id="plate" placeholder="PLAT NOMOR" style="width:170px;text-transform:uppercase" autocomplete="off">
+      <div style="position:relative"><input id="plate" placeholder="PLAT NOMOR" style="width:170px;text-transform:uppercase" autocomplete="off" oninput="plateLookup()"></div>
       <select id="reserved" style="width:210px"><option value="">Mekanik: bebas</option></select>
       <button class="quick" onclick="addCar('Quick')">+ Quick (A)</button>
       <button class="general" onclick="addCar('General')">+ General (B)</button>
       <span class="grow"></span>
       <button onclick="undo()">↩ Undo</button>
       <button class="danger" onclick="deleteLast()">Hapus terakhir</button>
-    </div></div>
+    </div><div class="in small" id="plateInfo" style="padding-top:0;min-height:18px"></div></div>
 
     <div class="card">
       <h2>Mekanik hari ini <span class="muted small" style="font-weight:400">— klik kartu untuk atur</span></h2>
@@ -146,6 +146,26 @@
     <input id="cnInput" placeholder="mis. pelanggan pergi, salah plat, dobel…">
   </div>
   <footer><button onclick="closeModal('cancelModal')">Kembali</button><button class="primary" style="background:var(--red);border-color:var(--red)" onclick="submitCancel()">Batalkan mobil</button></footer>
+</div></div>
+
+<!-- complete customer data for a queue car -->
+<div class="overlay" id="custModal"><div class="modal" style="width:480px">
+  <header><h3 id="cuTitle">Lengkapi data</h3><button onclick="closeModal('custModal')">Tutup</button></header>
+  <div class="body">
+    <div class="field"><label>Nama *</label><input id="cuName"></div>
+    <div class="grid2">
+      <div class="field"><label>No HP *</label><input id="cuPhone" inputmode="tel"></div>
+      <div class="field"><label>Alamat *</label><input id="cuAddr"></div>
+    </div>
+    <div class="field"><label>Mobil * <button class="link tiny" onclick="newCarModel()">+ model baru</button></label><select id="cuModel"></select></div>
+    <div class="grid2">
+      <div class="field"><label>Plat nomor *</label><input id="cuPlate" style="text-transform:uppercase"></div>
+      <div class="field"><label>Warna *</label><input id="cuColor" placeholder="mis. Hitam"></div>
+    </div>
+    <p class="tiny muted">Pelanggan yang tidak mau memberi data: isi "-".</p>
+    <div class="err" id="cuErr"></div>
+  </div>
+  <footer><button onclick="closeModal('custModal')">Batal</button><button class="primary" id="cuSave" onclick="saveCust()">Simpan</button></footer>
 </div></div>
 
 <div id="toast"></div>
@@ -314,7 +334,9 @@ function renderLanes() {
       else if (t.invoice) act = `<span class="tiny muted">${esc(t.invoice)}</span>`;
       return `<tr class="${["Done", "Cancelled"].includes(t.status) ? "dim" : ""}">
         <td><b>${esc(t.code)}</b>${t.reserved ? `<div class="tiny" style="color:var(--accent)">🔒 ${esc(t.reserved)}</div>` : ""}</td>
-        <td style="letter-spacing:.04em">${esc(t.plate)}</td>
+        <td><span style="letter-spacing:.04em">${esc(t.plate)}</span>
+          ${t.customer ? `<div class="tiny">${esc(t.customer)}${t.car ? ` <span class="muted">· ${esc(t.car)}</span>` : ""}</div>` : ""}
+          ${t.incomplete && t.status !== "Cancelled" ? `<div><button class="link tiny" style="color:var(--red)" onclick="openCust(${t.id})">⚠ data belum lengkap — lengkapi</button></div>` : ""}</td>
         <td class="small">${t.mechanics.map(m => esc(m.name)).join(", ") || "—"}</td>
         <td><span class="badge st-${stKey}">${stTxt}</span></td>
         <td class="small ${wait >= 30 ? "late" : ""}">${wait == null ? "" : wait + " mnt"}</td>
@@ -324,12 +346,108 @@ function renderLanes() {
   }
 }
 
+// ── check-in: look the plate up while typing ─────────
+let plateHits = [], pickedVeh = null, plateTimer = null, carModels = [], cuTicket = null;
+const pkey = s => String(s || "").toUpperCase().replace(/[^A-Z0-9]/g, "");
+const carName = v => v.car_models ? v.car_models.brand + " " + v.car_models.model : "";
+function plateLookup() {
+  clearTimeout(plateTimer); pickedVeh = null;
+  const k = pkey($("plate").value);
+  if (k.length < 3) { plateHits = []; $("plateInfo").innerHTML = ""; return; }
+  plateTimer = setTimeout(async () => {
+    const { data, error } = await sb.from("vehicles").select("id, plate, color, car_models(brand,model), customers!inner(id,name,phone,address,is_active)")
+      .eq("is_active", true).eq("plate_key", k).limit(5);
+    if (pkey($("plate").value) !== k) return;   // typed on meanwhile
+    if (error) { $("plateInfo").innerHTML = `<span class="err">${esc(error.message)}</span>`; return; }
+    plateHits = data || [];
+    const line = v => `${esc(v.customers.name)} · ${esc([carName(v), v.color].filter(Boolean).join(" · "))}` +
+      (!v.customers.phone || !v.customers.address || !v.color ? ` <span style="color:var(--red)">(data belum lengkap)</span>` : "");
+    if (!plateHits.length) $("plateInfo").innerHTML = `<span style="color:var(--warn-text)">Plat baru — masukkan antrian dulu, data pelanggan diisi sambil mobil dikerjakan.</span>`;
+    else if (plateHits.length === 1) { pickedVeh = plateHits[0].id; $("plateInfo").innerHTML = `<span style="color:var(--green)">✓ ${line(plateHits[0])}</span>`; }
+    else $("plateInfo").innerHTML = `Plat ini terdaftar ${plateHits.length}×, pilih: ` + plateHits.map(v =>
+      `<button class="sm" onclick="pickedVeh=${v.id};this.parentElement.querySelectorAll('button').forEach(b=>b.classList.remove('primary'));this.classList.add('primary')">${line(v)}</button>`).join(" ");
+  }, 250);
+}
+
+// ── complete customer data for a car in the queue ────
+async function openCust(ticketId) {
+  const t = B.tickets.find(x => x.id === ticketId); if (!t) return;
+  cuTicket = t;
+  if (!carModels.length) { const { data } = await sb.from("car_models").select("*").order("brand"); carModels = data || []; }
+  let v = null;
+  if (t.vehicle_id) { const r = await sb.from("vehicles").select("*, customers(*)").eq("id", t.vehicle_id).single(); v = r.data; }
+  $("cuTitle").textContent = `Data pelanggan — ${t.code} · ${t.plate}`;
+  $("cuName").value = v ? v.customers.name : ""; $("cuPhone").value = v ? v.customers.phone || "" : ""; $("cuAddr").value = v ? v.customers.address || "" : "";
+  $("cuPlate").value = v ? v.plate : t.plate; $("cuColor").value = v ? v.color || "" : "";
+  fillModels(v ? v.car_model_id : null);
+  cuTicket.vehicle = v;
+  $("cuErr").textContent = ""; openModal("custModal");
+  setTimeout(() => $(v ? (!v.customers.phone ? "cuPhone" : !v.customers.address ? "cuAddr" : "cuColor") : "cuName").focus(), 50);
+}
+function fillModels(sel) {
+  const brands = [...new Set(carModels.map(m => m.brand))].sort();
+  $("cuModel").innerHTML = `<option value="">— pilih mobil —</option>` + brands.map(b => `<optgroup label="${esc(b)}">` +
+    carModels.filter(m => m.brand === b).sort((x, y) => x.model.localeCompare(y.model))
+      .map(m => `<option value="${m.id}" ${m.id === sel ? "selected" : ""}>${esc(m.brand + " " + m.model)}</option>`).join("") + `</optgroup>`).join("");
+}
+async function newCarModel() {
+  const brands = [...new Set(carModels.map(m => m.brand))].sort();
+  let brand = prompt(`Merk? Pilih salah satu:\n${brands.join(", ")}` + (ME.role === "kasir" ? "" : "\n(atau ketik merk baru)"));
+  if (!brand || !brand.trim()) return;
+  const hit = brands.find(b => b.toLowerCase() === brand.trim().toLowerCase());
+  if (!hit && ME.role === "kasir") { $("cuErr").textContent = `Merk "${brand}" belum ada. Merk baru hanya bisa ditambah owner/admin.`; return; }
+  const cap = t => t.trim().replace(/\s+/g, " ").replace(/\b\w/g, ch => ch.toUpperCase());
+  brand = hit || cap(brand);
+  const model = prompt(`Tipe ${brand} (tulis lengkap, mis. Avanza, Grand Max):`); if (!model || !model.trim()) return;
+  const norm = t => t.toLowerCase().replace(/[^a-z0-9]/g, "");
+  const dup = carModels.find(m => norm(m.brand + m.model) === norm(brand + model));
+  if (dup) { fillModels(dup.id); $("cuErr").textContent = `${dup.brand} ${dup.model} sudah ada — sudah dipilih.`; return; }
+  const { data, error } = await sb.from("car_models").insert({ brand, model: cap(model) }).select().single();
+  if (error) { $("cuErr").textContent = "Gagal tambah model: " + error.message; return; }
+  carModels.push(data); fillModels(data.id);
+}
+async function saveCust() {
+  const err = $("cuErr"); err.textContent = "";
+  const name = $("cuName").value.trim().toUpperCase(), phone = $("cuPhone").value.trim(), address = $("cuAddr").value.trim();
+  const plate = $("cuPlate").value.trim().toUpperCase().replace(/\s+/g, " "), color = $("cuColor").value.trim(), model = Number($("cuModel").value) || null;
+  const need = [!name && "nama", !phone && "no HP", !address && "alamat", !model && "mobil", !plate && "plat", !color && "warna"].filter(Boolean);
+  if (need.length) { err.textContent = "Wajib diisi: " + need.join(", ") + "."; return; }
+  $("cuSave").disabled = true;
+  try {
+    const v = cuTicket.vehicle;
+    let vid;
+    if (v) {   // existing customer + car: complete what is missing
+      const a = await sb.from("customers").update({ name, phone, address }).eq("id", v.customer_id); if (a.error) throw a.error;
+      const b = await sb.from("vehicles").update({ plate, color, car_model_id: model }).eq("id", v.id); if (b.error) throw b.error;
+      vid = v.id;
+    } else {
+      let custId = null;
+      if (phone.replace(/\D/g, "").length >= 6) {   // same phone = probably the same person with another car
+        const { data: dup } = await sb.from("customers").select("id,name").eq("phone", phone).eq("is_active", true).limit(1);
+        if (dup && dup.length) {
+          if (confirm(`No HP ${phone} sudah terdaftar atas nama "${dup[0].name}".\n\nOK = tambahkan mobil ini ke ${dup[0].name}\nBatal = buat pelanggan baru`)) custId = dup[0].id;
+        }
+      }
+      if (!custId) { const a = await sb.from("customers").insert({ name, phone, address, created_by: ME.id }).select().single(); if (a.error) throw a.error; custId = a.data.id; }
+      const b = await sb.from("vehicles").insert({ customer_id: custId, plate, color, car_model_id: model }).select().single(); if (b.error) throw b.error;
+      vid = b.data.id;
+    }
+    const { error } = await sb.rpc("q_set_vehicle", { p_ticket: cuTicket.id, p_vehicle: vid }); if (error) throw error;
+    closeModal("custModal"); toast("Data tersimpan."); load();
+  } catch (e) { err.textContent = "Gagal simpan: " + errText(e); }
+  finally { $("cuSave").disabled = false; }
+}
+
 // ── actions ──────────────────────────────────────────
 async function addCar(lane) {
   const plate = $("plate").value.trim();
   if (!plate) { toast("Isi plat nomor.", "err"); $("plate").focus(); return; }
-  const { data, error } = await call("q_add", { p_plate: plate, p_lane: lane, p_reserved: Number($("reserved").value) || null });
-  if (!error) { toast(`${data.code} · ${data.plate} masuk antrian ${lane}.`); $("plate").value = ""; $("reserved").value = ""; $("plate").focus(); }
+  if (plateHits.length > 1 && !pickedVeh) { toast("Plat ini terdaftar lebih dari sekali — pilih pemiliknya di bawah kolom plat.", "err"); return; }
+  const { data, error } = await call("q_add", { p_plate: plate, p_lane: lane, p_reserved: Number($("reserved").value) || null, p_vehicle: pickedVeh });
+  if (!error) {
+    toast(`${data.code} · ${esc(data.plate)} masuk antrian ${lane}.` + (data.vehicle_id ? "" : " Data pelanggan belum ada — klik \"lengkapi\" di barisnya."));
+    $("plate").value = ""; $("reserved").value = ""; plateHits = []; pickedVeh = null; $("plateInfo").innerHTML = ""; $("plate").focus();
+  }
 }
 async function undo() { const { data, error } = await call("q_undo", {}); if (!error) toast("Undo: " + esc(data)); }
 async function deleteLast() {
