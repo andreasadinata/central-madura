@@ -1,0 +1,5 @@
+-- v10_queue_daily_summary (applied 2026-11-25)
+-- app_secrets table (RLS on, no policies: unreadable through the API) holds key 'daily_summary'.
+-- q_daily_summary(p_secret, p_day) -> jsonb per branch: totals, cancels, per-mechanic work minutes,
+-- flags, all cars. Callable by anon WITH the secret; used by apps-script/daily_email.gs at 20:00.
+-- Full SQL as applied lives in Supabase migration history (name: v10_queue_daily_summary).

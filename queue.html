@@ -1,0 +1,400 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Central POS — Antrian</title>
+<link rel="stylesheet" href="style.css">
+<style>
+  #app{min-height:100vh;flex-direction:column}
+  .wrap{padding:16px 20px;display:flex;flex-direction:column;gap:14px}
+  .card{background:var(--surface);border:1px solid var(--border);border-radius:10px}
+  .card > h2{font-size:13px;font-weight:600;padding:12px 16px;border-bottom:1px solid var(--border);display:flex;gap:8px;align-items:center}
+  .card > .in{padding:14px 16px}
+  .clock{font-size:13px;color:var(--muted)}
+  .jumatan{background:#e6f6f4;border:1px solid #9fd8d0;color:#0d6b5f;font-weight:600;padding:10px 14px;border-radius:var(--r)}
+  button.quick{background:#0f7b5a;border-color:#0f7b5a;color:#fff}
+  button.general{background:#1d4ed8;border-color:#1d4ed8;color:#fff}
+  button.sm{padding:5px 10px;font-size:12px}
+  .mgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:10px}
+  .mcard{border:2px solid var(--border);border-radius:8px;padding:10px 12px;cursor:pointer;background:var(--surface)}
+  .mcard:hover{box-shadow:0 2px 8px rgba(0,0,0,.06)}
+  .mcard b{display:block;font-size:15px;margin:4px 0 2px}
+  .mcard .st{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.04em}
+  .mcard .jobs{font-size:12px;color:var(--accent);min-height:16px;margin-top:4px}
+  .mcard .grace{font-size:11px;margin-top:4px;font-weight:600}
+  .s-Available{border-color:#0f7b5a} .s-Available .st{color:#0f7b5a}
+  .s-Busy{border-color:#c4362b} .s-Busy .st{color:#c4362b}
+  .s-Break{border-color:#d9a400} .s-Break .st{color:#946f00}
+  .s-Jumatan{border-color:#0d9488} .s-Jumatan .st{color:#0d6b5f}
+  .s-GoneHome,.s-Inactive{opacity:.55} .s-GoneHome .st,.s-Inactive .st{color:var(--muted)}
+  .lane-q > h2{color:#0f7b5a} .lane-g > h2{color:#1d4ed8}
+  .st-Waiting{background:var(--page);color:var(--muted)}
+  .st-Serving{background:#e7f0fd;color:#1d4ed8}
+  .st-Done{background:var(--green-soft);color:var(--green)}
+  .st-Cancelled{background:var(--red-soft);color:var(--red)}
+  .st-Paused{background:var(--warn-bg);color:var(--warn-text)}
+  tr.dim td{opacity:.45}
+  .late{color:var(--red);font-weight:700}
+  .pick{display:flex;flex-direction:column;gap:8px;max-height:330px;overflow:auto}
+  .pick label{display:flex;gap:10px;align-items:center;border:1px solid var(--border);border-radius:var(--r);padding:10px 12px;
+    font-size:14px;color:var(--text);margin:0;cursor:pointer}
+  .pick label.on{border-color:var(--green);background:var(--green-soft)}
+  .pick label.warn{border-color:var(--warn-border);background:var(--warn-bg)}
+  .pick label.off{opacity:.45;cursor:not-allowed}
+  .pick input{width:auto}
+  .actions{display:flex;flex-direction:column;gap:8px}
+  .actions button{text-align:left;padding:12px 14px}
+  .flag{border:1px solid var(--border);border-radius:8px;padding:10px 12px}
+  .flag.bad{border-color:var(--red)}
+  @keyframes blink{50%{opacity:.35}} .blink{animation:blink 1s infinite}
+</style>
+</head>
+<body>
+
+<div id="login">
+  <div class="login-card">
+    <h1>Central POS — Antrian</h1>
+    <p>Masuk dengan akun staf</p>
+    <input id="email" type="email" placeholder="Email" autocomplete="username">
+    <input id="pass" type="password" placeholder="Password" autocomplete="current-password">
+    <button class="primary" id="loginBtn">Masuk</button>
+    <div class="err" id="loginErr"></div>
+    <button class="link forgot" id="forgotBtn">Lupa password?</button>
+  </div>
+</div>
+
+<div id="app">
+  <div class="topbar">
+    <div class="logo">CB</div>
+    <div class="brand grow"><b>Antrian <span id="branch"></span></b><span id="who">—</span></div>
+    <span class="clock" id="clock"></span>
+    <span id="branchSw"></span>
+    <a href="index.html"><button>Kasir</button></a>
+    <a href="admin.html" id="toAdmin" class="hide"><button>Admin</button></a>
+    <button onclick="logout()">Keluar</button>
+  </div>
+
+  <div class="wrap">
+    <div id="jumatanBar" class="jumatan hide">🕌 Jumatan 11:00–12:30 — semua mekanik istirahat, tidak ada tanda lambat.</div>
+
+    <div class="card"><div class="in row" style="flex-wrap:wrap">
+      <input id="plate" placeholder="PLAT NOMOR" style="width:170px;text-transform:uppercase" autocomplete="off">
+      <select id="reserved" style="width:210px"><option value="">Mekanik: bebas</option></select>
+      <button class="quick" onclick="addCar('Quick')">+ Quick (A)</button>
+      <button class="general" onclick="addCar('General')">+ General (B)</button>
+      <span class="grow"></span>
+      <button onclick="undo()">↩ Undo</button>
+      <button class="danger" onclick="deleteLast()">Hapus terakhir</button>
+    </div></div>
+
+    <div class="card">
+      <h2>Mekanik hari ini <span class="muted small" style="font-weight:400">— klik kartu untuk atur</span></h2>
+      <div class="in"><div class="mgrid" id="board"><span class="muted">Memuat…</span></div></div>
+    </div>
+
+    <div class="card" id="flagCard">
+      <h2>Tanda lambat (lebih dari <span id="graceMin">7</span> menit)</h2>
+      <div class="in" id="flags"></div>
+    </div>
+
+    <div class="card lane-q">
+      <h2>⚡ Quick</h2>
+      <table><thead><tr><th>No</th><th>Plat</th><th>Mekanik</th><th>Status</th><th>Tunggu</th><th>Dikerjakan</th><th></th></tr></thead>
+        <tbody id="tQuick"></tbody></table>
+    </div>
+    <div class="card lane-g">
+      <h2>🔧 General</h2>
+      <table><thead><tr><th>No</th><th>Plat</th><th>Mekanik</th><th>Status</th><th>Tunggu</th><th>Dikerjakan</th><th></th></tr></thead>
+        <tbody id="tGeneral"></tbody></table>
+    </div>
+  </div>
+</div>
+
+<!-- mechanic actions -->
+<div class="overlay" id="mechModal"><div class="modal" style="width:400px">
+  <header><h3 id="mmTitle">—</h3><button onclick="closeModal('mechModal')">Tutup</button></header>
+  <div class="body"><div class="muted small" id="mmSub" style="margin-bottom:12px"></div><div class="actions" id="mmActs"></div></div>
+</div></div>
+
+<!-- take / edit -->
+<div class="overlay" id="takeModal"><div class="modal" style="width:440px">
+  <header><h3 id="tkTitle">Pilih mekanik</h3><button onclick="closeModal('takeModal')">Tutup</button></header>
+  <div class="body">
+    <div class="small" style="margin-bottom:10px">Mobil <b id="tkCode"></b> · <b id="tkPlate"></b> <span id="tkRes"></span></div>
+    <div class="pick" id="tkList"></div>
+  </div>
+  <footer><button onclick="closeModal('takeModal')">Batal</button><button class="go" id="tkOk" onclick="confirmTake()">Simpan</button></footer>
+</div></div>
+
+<!-- flag reason -->
+<div class="overlay" id="reasonModal"><div class="modal" style="width:440px">
+  <header><h3 style="color:var(--red)">Jelaskan keterlambatan</h3><button onclick="closeModal('reasonModal')">Tutup</button></header>
+  <div class="body">
+    <p class="small" id="rsText" style="margin-bottom:10px"></p>
+    <input id="rsInput" placeholder="mis. ke toilet, bantu mekanik lain, ambil barang…">
+    <p class="tiny muted" style="margin-top:6px">Satu alasan berlaku untuk semua tanda mekanik ini yang berdekatan (≤30 menit).</p>
+  </div>
+  <footer><button onclick="closeModal('reasonModal')">Batal</button><button class="primary" onclick="submitReason()">Simpan alasan</button></footer>
+</div></div>
+
+<!-- cancel -->
+<div class="overlay" id="cancelModal"><div class="modal" style="width:420px">
+  <header><h3 style="color:var(--red)">Batalkan mobil</h3><button onclick="closeModal('cancelModal')">Tutup</button></header>
+  <div class="body">
+    <p class="small" id="cnText" style="margin-bottom:10px"></p>
+    <input id="cnInput" placeholder="mis. pelanggan pergi, salah plat, dobel…">
+  </div>
+  <footer><button onclick="closeModal('cancelModal')">Kembali</button><button class="primary" style="background:var(--red);border-color:var(--red)" onclick="submitCancel()">Batalkan mobil</button></footer>
+</div></div>
+
+<div id="toast"></div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="config.js"></script>
+<script src="common.js"></script>
+<script>
+let B = null;                 // last board from q_board()
+let busy = false;             // an action is running: skip auto-refresh
+let tk = null, tkEdit = false, mmId = null, rsFlag = null, rsThen = null, cnId = null;
+
+const mins = (a, b) => Math.max(0, Math.floor(((b ? new Date(b) : new Date()) - new Date(a)) / 60000));
+const dur = m => m >= 60 ? Math.floor(m / 60) + "j " + (m % 60) + "m" : m + " mnt";
+const tm = t => t ? new Date(t).toLocaleTimeString("id-ID", { hour: "2-digit", minute: "2-digit", timeZone: "Asia/Jakarta" }) : "";
+function closeModal(id) { $(id).classList.remove("open"); }
+function openModal(id) { $(id).classList.add("open"); }
+
+async function call(fn, args, okMsg) {
+  busy = true;
+  const { data, error } = await sb.rpc(fn, args);
+  busy = false;
+  if (error) { toast(esc(error.message), "err", 6000); return { error }; }
+  if (okMsg) toast(okMsg);
+  await load();
+  return { data };
+}
+
+async function start() {
+  $("who").textContent = ME.full_name + " · " + ME.role;
+  if (ME.role !== "kasir") $("toAdmin").classList.remove("hide");
+  branchSwitcher($("branchSw"));
+  $("plate").addEventListener("keydown", e => { if (e.key === "Enter") addCar("Quick"); });
+  setInterval(() => { $("clock").textContent = new Date().toLocaleString("id-ID", { weekday: "long", hour: "2-digit", minute: "2-digit", timeZone: "Asia/Jakarta" }); }, 1000);
+  await load();
+  setInterval(() => { if (!busy && !document.hidden) load(); }, 4000);
+}
+
+async function load() {
+  const { data, error } = await sb.rpc("q_board");
+  if (error) { $("board").innerHTML = `<span class="err">${esc(error.message)}</span>`; return; }
+  B = data;
+  $("branch").textContent = "· " + B.branch;
+  $("graceMin").textContent = B.grace_min;
+  $("jumatanBar").classList.toggle("hide", !B.jumatan_now);
+  renderBoard(); renderFlags(); renderLanes(); renderReserved();
+}
+
+// ── mechanics ────────────────────────────────────────
+const shownStatus = m => B.jumatan_now && (m.status === "Available" || m.status === "Busy") ? "Jumatan" : m.status;
+const stLabel = { Available: "Siap", Busy: "Kerja", Break: "Istirahat", Jumatan: "Jumatan", GoneHome: "Pulang", Inactive: "Tidak masuk" };
+const unexplained = id => B.flags.filter(f => f.mechanic_id === id && !f.reason);
+
+function renderBoard() {
+  if (!B.mechanics.length) { $("board").innerHTML = `<span class="muted">Belum ada mekanik di cabang ini. Tambahkan di Admin → Mekanik.</span>`; return; }
+  const waiting = B.tickets.filter(t => t.status === "Waiting");
+  $("board").innerHTML = B.mechanics.map(m => {
+    const s = shownStatus(m);
+    let grace = "";
+    if (s === "Available") {
+      const cars = waiting.filter(t => t.lane === m.role && (!t.reserved_id || t.reserved_id === m.id));
+      if (cars.length) {
+        const c = cars[0], since = new Date(Math.max(new Date(c.created_at), new Date(m.available_since || c.created_at)));
+        const left = B.grace_min - mins(since);
+        grace = left <= 0 ? `<div class="grace late">🔴 ${esc(c.code)} — ambil sekarang!</div>`
+          : left <= 3 ? `<div class="grace blink" style="color:var(--warn-text)">⚠ ${left} mnt — ${esc(c.code)} menunggu</div>`
+          : `<div class="grace muted">⏳ ${left} mnt — ${esc(c.code)} menunggu</div>`;
+      }
+    }
+    const nf = unexplained(m.id).length;
+    return `<div class="mcard s-${s}" onclick="openMech(${m.id})">
+      <div class="st">${stLabel[s]}${nf ? ` <span class="late">· ${nf} tanda</span>` : ""}</div>
+      <b>${esc(m.name)}</b>
+      <div class="tiny muted">${m.role ? (m.role === "Quick" ? "⚡ Quick" : "🔧 General") : "—"}</div>
+      <div class="jobs">${m.jobs.length ? "🚗 " + m.jobs.map(esc).join(", ") : ""}</div>${grace}</div>`;
+  }).join("");
+}
+
+function openMech(id) {
+  const m = B.mechanics.find(x => x.id === id); if (!m) return;
+  mmId = id;
+  $("mmTitle").textContent = m.name;
+  const s = shownStatus(m), fri = B.is_friday, usedBreak = !!m.break_start;
+  $("mmSub").textContent = m.status === "Inactive" ? "Belum masuk hari ini. Pilih jalur:" :
+    `${m.role} · ${stLabel[s]}${m.jobs.length ? " · pegang " + m.jobs.join(", ") : ""}${usedBreak ? " · istirahat " + tm(m.break_start) + (m.break_end ? "–" + tm(m.break_end) : "") : ""}`;
+  const a = [];
+  if (m.status === "Inactive") {
+    a.push(`<button class="quick" onclick="mech('activate','Quick')">⚡ Masuk — Quick</button>`);
+    a.push(`<button class="general" onclick="mech('activate','General')">🔧 Masuk — General</button>`);
+  } else if (m.status === "GoneHome") {
+    a.push(`<button class="go" onclick="mech('available')">🟢 Kembali kerja</button>`);
+  } else {
+    if (m.status === "Break") a.push(`<button class="go" onclick="mech('back')">🟢 Selesai istirahat</button>`);
+    else if (!fri && !usedBreak) a.push(`<button onclick="mech('break')" style="background:#fff6d6;border-color:#f2d36b">☕ Istirahat (1 jam)</button>`);
+    else a.push(`<button disabled>${fri ? "🕌 Jumat: Jumatan otomatis 11:00–12:30" : "☕ Istirahat sudah dipakai hari ini"}</button>`);
+    const other = m.role === "Quick" ? "General" : "Quick";
+    a.push(`<button onclick="mech('role','${other}')">🔄 Pindah ke ${other}${m.jobs.length ? " (mobil yang dipegang tetap)" : ""}</button>`);
+    a.push(`<button onclick="if(confirm('${esc(m.name)} pulang sekarang?'))mech('gonehome')">🏠 Pulang</button>`);
+  }
+  $("mmActs").innerHTML = a.join("");
+  openModal("mechModal");
+}
+async function mech(action, role) {
+  closeModal("mechModal");
+  await call("q_mech", { p_mech: mmId, p_action: action, p_role: role || null });
+}
+
+function renderReserved() {
+  const sel = $("reserved"), v = sel.value;
+  sel.innerHTML = `<option value="">Mekanik: bebas</option>` + B.mechanics.filter(m => !["Inactive", "GoneHome"].includes(m.status))
+    .map(m => `<option value="${m.id}">Kunci: ${esc(m.name)} (${m.role})${m.status !== "Available" ? " — " + stLabel[m.status] : ""}</option>`).join("");
+  sel.value = v;
+}
+
+// ── flags ────────────────────────────────────────────
+function renderFlags() {
+  if (!B.flags.length) { $("flags").innerHTML = `<span style="color:var(--green)">✓ Tidak ada tanda lambat hari ini.</span>`; return; }
+  const by = {};
+  B.flags.forEach(f => (by[f.mechanic] = by[f.mechanic] || []).push(f));
+  $("flags").innerHTML = `<div class="mgrid" style="grid-template-columns:repeat(auto-fill,minmax(260px,1fr))">` + Object.entries(by).map(([name, fs]) => {
+    const bad = fs.some(f => !f.reason);
+    return `<div class="flag ${bad ? "bad" : ""}"><div class="row"><b class="grow">${esc(name)}</b>
+      <span class="small ${bad ? "late" : "muted"}">${bad ? "perlu alasan" : "✓ sudah dijelaskan"}</span></div>
+      ${fs.map(f => `<div class="small" style="margin-top:4px">${f.reason ? "✓" : "⚠"} ${esc(f.code)} ${esc(f.plate)} · ${tm(f.flagged_at)}
+        ${f.reason ? `<span class="muted">— ${esc(f.reason)}</span>` : `<button class="link small" onclick="askReason(${f.id})">isi alasan</button>`}</div>`).join("")}</div>`;
+  }).join("") + "</div>";
+}
+function askReason(flagId, then) {
+  const f = B.flags.find(x => x.id === flagId); if (!f) return;
+  rsFlag = flagId; rsThen = then || null;
+  $("rsText").innerHTML = `<b>${esc(f.mechanic)}</b> tidak mengambil <b>${esc(f.code)}</b> (${esc(f.plate)}) dalam ${B.grace_min} menit (sejak ${tm(f.flagged_at)}).`;
+  $("rsInput").value = ""; openModal("reasonModal"); setTimeout(() => $("rsInput").focus(), 50);
+}
+async function submitReason() {
+  const r = $("rsInput").value.trim();
+  if (!r) { toast("Isi alasannya.", "err"); return; }
+  closeModal("reasonModal");
+  const { error } = await call("q_flag_reason", { p_flag: rsFlag, p_reason: r });
+  if (!error && rsThen) rsThen();
+}
+
+// ── lanes ────────────────────────────────────────────
+function renderLanes() {
+  for (const [lane, el] of [["Quick", "tQuick"], ["General", "tGeneral"]]) {
+    const rows = B.tickets.filter(t => t.lane === lane);
+    if (!rows.length) { $(el).innerHTML = `<tr><td colspan="7" class="muted">Belum ada mobil.</td></tr>`; continue; }
+    const waiting = rows.filter(t => t.status === "Waiting");
+    $(el).innerHTML = rows.map(t => {
+      const paused = !!t.paused_since;
+      const stKey = paused ? "Paused" : t.status;
+      const stTxt = paused ? "Beli barang · " + dur(mins(t.paused_since)) : { Waiting: "Menunggu", Serving: "Dikerjakan", Done: "Selesai", Cancelled: "Batal", Unfinished: "Belum selesai" }[t.status];
+      const wait = t.status === "Waiting" ? mins(t.created_at) : t.taken_at ? mins(t.created_at, t.taken_at) : null;
+      const work = t.taken_at ? Math.max(0, mins(t.taken_at, t.done_at) - Math.round(t.paused_min)) : null;
+      let act = "";
+      if (t.status === "Waiting") {
+        const older = waiting.find(w => !w.reserved_id && (w.created_at < t.created_at || (w.created_at === t.created_at && w.id < t.id)));
+        act = older ? `<button class="sm" disabled>⏳ ${esc(older.code)} dulu</button>`
+                    : `<button class="sm primary" onclick="openTake(${t.id},false)">▶ Ambil</button>`;
+        act += ` <button class="sm danger" onclick="openCancel(${t.id})">✕</button>`;
+      } else if (t.status === "Serving") {
+        act = `<button class="sm go" onclick="done(${t.id})">✓ Selesai</button>
+          <button class="sm" onclick="pause(${t.id},${!paused})">${paused ? "▶ Lanjut" : "🛒 Beli barang"}</button>
+          <button class="sm" onclick="openTake(${t.id},true)">✎ Mekanik</button>
+          <button class="sm danger" onclick="openCancel(${t.id})">✕</button>`;
+      } else if (t.status === "Cancelled") act = `<span class="tiny muted">${esc(t.cancel_reason || "")}</span>`;
+      else if (t.invoice) act = `<span class="tiny muted">${esc(t.invoice)}</span>`;
+      return `<tr class="${["Done", "Cancelled"].includes(t.status) ? "dim" : ""}">
+        <td><b>${esc(t.code)}</b>${t.reserved ? `<div class="tiny" style="color:var(--accent)">🔒 ${esc(t.reserved)}</div>` : ""}</td>
+        <td style="letter-spacing:.04em">${esc(t.plate)}</td>
+        <td class="small">${t.mechanics.map(m => esc(m.name)).join(", ") || "—"}</td>
+        <td><span class="badge st-${stKey}">${stTxt}</span></td>
+        <td class="small ${wait >= 30 ? "late" : ""}">${wait == null ? "" : wait + " mnt"}</td>
+        <td class="small">${work == null ? "" : dur(work)}${t.paused_min >= 1 ? `<div class="tiny muted">beli barang ${dur(Math.round(t.paused_min))}</div>` : ""}</td>
+        <td style="white-space:nowrap">${act}</td></tr>`;
+    }).join("");
+  }
+}
+
+// ── actions ──────────────────────────────────────────
+async function addCar(lane) {
+  const plate = $("plate").value.trim();
+  if (!plate) { toast("Isi plat nomor.", "err"); $("plate").focus(); return; }
+  const { data, error } = await call("q_add", { p_plate: plate, p_lane: lane, p_reserved: Number($("reserved").value) || null });
+  if (!error) { toast(`${data.code} · ${data.plate} masuk antrian ${lane}.`); $("plate").value = ""; $("reserved").value = ""; $("plate").focus(); }
+}
+async function undo() { const { data, error } = await call("q_undo", {}); if (!error) toast("Undo: " + esc(data)); }
+async function deleteLast() {
+  const last = [...B.tickets].sort((a, b) => a.created_at < b.created_at || (a.created_at === b.created_at && a.id < b.id) ? 1 : -1)[0];
+  if (!last) { toast("Belum ada mobil hari ini.", "err"); return; }
+  if (!confirm(`Hapus ${last.code} · ${last.plate}? (untuk salah input)`)) return;
+  const { data, error } = await call("q_delete_last", {}); if (!error) toast("Dihapus: " + esc(data));
+}
+async function done(id) { await call("q_done", { p_ticket: id }); }
+async function pause(id, on) { await call("q_pause", { p_ticket: id, p_on: on }); }
+
+function openCancel(id) {
+  const t = B.tickets.find(x => x.id === id); cnId = id;
+  $("cnText").innerHTML = `Mobil <b>${esc(t.code)}</b> · ${esc(t.plate)}. Alasan wajib.`;
+  $("cnInput").value = ""; openModal("cancelModal"); setTimeout(() => $("cnInput").focus(), 50);
+}
+async function submitCancel() {
+  const r = $("cnInput").value.trim();
+  if (!r) { toast("Isi alasan batal.", "err"); return; }
+  closeModal("cancelModal");
+  await call("q_cancel", { p_ticket: cnId, p_reason: r });
+}
+
+function openTake(id, edit) {
+  tk = B.tickets.find(x => x.id === id); tkEdit = edit;
+  $("tkTitle").textContent = edit ? "Ubah mekanik" : "Pilih mekanik";
+  $("tkCode").textContent = tk.code; $("tkPlate").textContent = tk.plate;
+  $("tkRes").innerHTML = tk.reserved ? ` · <span style="color:var(--accent)">🔒 diminta: ${esc(tk.reserved)}</span>` : "";
+  const on = edit ? tk.mechanics.map(m => m.id) : (tk.reserved_id ? [tk.reserved_id] : []);
+  const list = B.mechanics.filter(m => m.role === tk.lane && m.status !== "Inactive");
+  $("tkList").innerHTML = list.length ? list.map(m => {
+    const others = m.jobs.filter(c => c !== tk.code), mine = on.includes(m.id);
+    const blocked = !mine && (others.length >= 2 || (!edit && ["Break", "GoneHome"].includes(m.status)));
+    const nf = unexplained(m.id).length;
+    const note = others.length >= 2 ? `<span class="late small">penuh (${others.join(", ")})</span>`
+      : !edit && m.status === "Break" ? `<span class="small" style="color:var(--warn-text)">istirahat</span>`
+      : !edit && m.status === "GoneHome" ? `<span class="small muted">pulang</span>`
+      : others.length === 1 ? `<span class="small" style="color:var(--warn-text)">sedang pegang ${esc(others[0])}</span>`
+      : `<span class="small" style="color:var(--green)">siap</span>`;
+    return `<label class="${blocked ? "off" : mine ? "on" : others.length === 1 ? "warn" : ""}">
+      <input type="checkbox" value="${m.id}" ${mine ? "checked" : ""} ${blocked ? "disabled" : ""}
+        onchange="this.parentElement.classList.toggle('on',this.checked)">
+      <b class="grow">${esc(m.name)}</b> ${note}${nf ? ` <span class="late small">⚠ ${nf} tanda</span>` : ""}</label>`;
+  }).join("") : `<span class="muted">Tidak ada mekanik ${tk.lane} yang masuk hari ini.</span>`;
+  openModal("takeModal");
+}
+async function confirmTake() {
+  const ids = [...$("tkList").querySelectorAll("input:checked")].map(i => Number(i.value));
+  if (!ids.length) { toast("Pilih minimal satu mekanik.", "err"); return; }
+  const doubled = ids.map(id => B.mechanics.find(m => m.id === id)).filter(m => m.jobs.filter(c => c !== tk.code).length === 1);
+  if (doubled.length && !confirm(doubled.map(m => `${m.name} sedang pegang ${m.jobs.filter(c => c !== tk.code)[0]}`).join("\n") + `\n\nTetap tugaskan ke ${tk.code}?`)) return;
+  closeModal("takeModal");
+  await doTake(ids);
+}
+// a mechanic with an unexplained flag must explain first (one reason covers his chain), then the take continues
+async function doTake(ids) {
+  const flagged = ids.filter(id => !(tkEdit && tk.mechanics.some(m => m.id === id))).map(id => unexplained(id)[0]).find(Boolean);
+  if (flagged) { askReason(flagged.id, () => doTake(ids)); return; }
+  await call(tkEdit ? "q_edit_mechs" : "q_take", { p_ticket: tk.id, p_mechs: ids });
+}
+
+document.addEventListener("keydown", e => { if (e.key === "Escape") document.querySelectorAll(".overlay.open").forEach(o => o.classList.remove("open")); });
+$("rsInput").addEventListener("keydown", e => { if (e.key === "Enter") submitReason(); });
+$("cnInput").addEventListener("keydown", e => { if (e.key === "Enter") submitCancel(); });
+authGate(start);
+</script>
+</body>
+</html>

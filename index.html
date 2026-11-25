@@ -36,6 +36,10 @@
   .custtop{display:flex;justify-content:space-between;align-items:center;gap:8px}
   .custtop b{font-size:15px}
   .veh{display:flex;gap:6px;flex-wrap:wrap;margin-top:10px}
+  .qstrip{display:flex;gap:6px;overflow-x:auto;margin-bottom:8px;padding-bottom:2px}
+  .qstrip button{padding:5px 9px;font-size:12px;white-space:nowrap;flex-shrink:0}
+  .qstrip button.on{background:var(--accent-soft);border-color:var(--accent);color:var(--accent-ink);font-weight:600}
+  .qstrip .lbl{font-size:11px;color:var(--muted);align-self:center;flex-shrink:0}
   .veh button{padding:6px 10px;font-size:12px}
   .veh button.on{background:var(--accent-soft);border-color:var(--accent);color:var(--accent-ink);font-weight:600}
   .results{position:absolute;left:0;right:0;top:44px;background:var(--surface);border:1px solid var(--border);border-radius:8px;
@@ -116,6 +120,7 @@
     <span class="chip" id="invChip">INVOICE BARU</span>
     <button onclick="openTx()">Transaksi <span class="small muted">· belum lunas</span> <b id="pendingCount" style="color:var(--red)"></b></button>
     <span id="branchSw"></span>
+    <a href="queue.html"><button>Antrian</button></a>
     <a id="adminLink" class="hide" href="admin.html"><button>Admin</button></a>
     <button onclick="logout()">Keluar</button>
   </div>
@@ -139,6 +144,7 @@
     <!-- RIGHT: invoice -->
     <div class="right">
       <div class="pad" style="padding-bottom:0">
+        <div id="qStrip" class="qstrip hide"></div>
         <div class="custbox">
           <div class="custtop">
             <div><b id="custName">—</b> <span class="small muted" id="custMeta"></span></div>
@@ -244,7 +250,8 @@ async function start() {
     await loadMaster();
   } catch (e) { toast("Gagal memuat data: " + esc(errText(e)), "err"); return; }
   await setCustomer(null);
-  setKind("jasa"); renderAll(); refreshPending();
+  setKind("jasa"); renderAll(); refreshPending(); refreshQueue();
+  setInterval(() => { if (!document.hidden && !sale) refreshQueue(); }, 20000);
   branchSwitcher($("branchSw"));
   const want = new URLSearchParams(location.search).get("sale");   // opened from Admin → Penjualan
   if (want) { history.replaceState(null, "", location.pathname); await openSale(Number(want)); }
@@ -580,14 +587,40 @@ async function openSale(id) {
   await setCustomer(sale.customers, sale.vehicle_id);
 }
 
+// ── cars from the queue (Antrian): picking one finds the customer by plate and links the invoice to it
+let qCars = [], qTicket = null;
+async function refreshQueue() {
+  const { data, error } = await sb.rpc("q_for_cashier");
+  if (error) return;
+  qCars = data || []; renderQueueStrip();
+}
+function renderQueueStrip() {
+  const el = $("qStrip");
+  if (sale || !qCars.length) { el.classList.add("hide"); return; }
+  const st = { Done: "✓", Serving: "🔧", Waiting: "⏳", Unfinished: "…" };
+  el.innerHTML = `<span class="lbl">Antrian:</span>` + qCars.map(c => `<button class="${c.id === qTicket ? "on" : ""}" onclick="pickQueueCar(${c.id})"
+    title="${esc((c.mechanics || "belum ada mekanik") + (c.day !== qCars[0].day ? " · kemarin" : ""))}">${st[c.status] || ""} ${esc(c.code)} · ${esc(c.plate)}</button>`).join("");
+  el.classList.remove("hide");
+}
+async function pickQueueCar(id) {
+  if (qTicket === id) { qTicket = null; renderQueueStrip(); return; }
+  const c = qCars.find(x => x.id === id); qTicket = id; renderQueueStrip();
+  const { data } = await sb.from("vehicles").select("id,plate,color,customer_id,customers!inner(*),car_models(brand,model)")
+    .eq("is_active", true).eq("customers.is_active", true).eq("plate_key", c.plate_key).limit(5);
+  if (data && data.length === 1) { setCustomer(data[0].customers, data[0].id); toast(`${c.code}: ${esc(data[0].customers.name)} · ${esc(c.plate)}`); }
+  else { startCustSearch(); $("custQ").value = c.plate; searchCust();
+    if (!data || !data.length) toast(`Plat ${esc(c.plate)} belum terdaftar — klik "+ Baru".`, "ok", 4000); }
+  renderQueueStrip();
+}
+
 function newInvoice() {
-  sale = null; cart = []; editing = -1; method = "bayar"; payLines = []; payDue = null;
+  sale = null; cart = []; editing = -1; method = "bayar"; payLines = []; payDue = null; qTicket = null;
   setCustomer(null);
   $("q").value = ""; renderGrid();
 }
 
 // ═══════════════════════ RENDER ═══════════════════════
-function renderAll() { renderLines(); renderFoot(); renderHeader(); }
+function renderAll() { renderLines(); renderFoot(); renderHeader(); renderQueueStrip(); }
 
 function renderHeader() {
   $("invChip").textContent = sale ? `${sale.invoice_no}${sale.revision > 1 ? " · Rev " + sale.revision : ""}` : "INVOICE BARU";
@@ -604,6 +637,8 @@ function renderLines() {
       const sub = [];
       if (it.qty > 1) sub.push("@ " + num(it.unit_price));
       if (it.unit_price < it.standard_price) sub.push(`<span class="warnbox">Turun dari ${num(it.standard_price)} — ${esc(it.price_reason || "")}</span>`);
+      if (it.discount_status === "pending" && !c) sub.push(`<span class="badge b-void">menunggu persetujuan owner — belum bisa dibayar</span>`);
+      if (it.discount_status === "rejected") sub.push(`<span class="badge b-void">harga turun ditolak owner — kembali ke harga normal</span>`);
       if (it.added_after_print) sub.push(`<span class="badge b-tempo">ditambah setelah cetak</span>`);
       if (c) sub.push(`<span style="color:var(--red)">Dibatalkan: ${esc(it.cancel_reason)}</span>`);
       else if (canEdit()) sub.push(`<button class="link small danger" onclick="cancelItem(${it.id})">Batalkan</button>`);
@@ -627,7 +662,7 @@ function renderLines() {
           <input value="${l.qty}" onchange="setQty(${i},this.value)"><button onclick="setQty(${i},${l.qty + 1})">+</button></div></div>
         <div><label>Harga satuan ${l.manual ? `· <button class="link tiny" onclick="resetPrice(${i})">kembali ke ${num(std)}</button>` : ""}</label>
           <input value="${num(l.price)}" onchange="setPrice(${i},this.value)" inputmode="numeric"></div>
-        ${l.price < std ? `<div class="full"><label>Alasan turun harga (wajib)</label><input value="${esc(l.reason)}" oninput="setReason(${i},this.value)" placeholder="mis. langganan lama"></div>` : ""}
+        ${l.price < std ? `<div class="full"><label>Alasan + owner yang menyuruh (wajib) — ${ME.role === "owner" ? "Anda owner: langsung berlaku" : "harus disetujui owner sebelum bisa dibayar"}</label><input value="${esc(l.reason)}" oninput="setReason(${i},this.value)" placeholder="mis. disuruh Pak Andreas, langganan lama"></div>` : ""}
         <div class="full row" style="justify-content:space-between"><button class="link danger small" onclick="removeLine(${i})">Hapus dari keranjang</button><button class="small" onclick="toggleEdit(${i})">Selesai</button></div>
       </div>`;
     return `<div class="ln ${sale ? "added" : ""}" onclick="toggleEdit(${i})"><span class="q">${num(l.qty)}×</span><span class="n">${esc(p.name)}</span>
@@ -751,6 +786,10 @@ function saveNew(payAndPrint) {
     });
     if (error) throw error;
     let msg = `Tersimpan · <b>${s.invoice_no}</b> · ${rp(s.total)}`;
+    if (qTicket) {
+      const q = qCars.find(x => x.id === qTicket), lk = await sb.rpc("q_link_sale", { p_ticket: qTicket, p_sale: s.id });
+      msg += lk.error ? ` · <span style="color:#fca5a5">antrian tidak tersambung: ${esc(lk.error.message)}</span>` : ` · antrian ${esc(q ? q.code : "")}`;
+    }
     if (payAndPrint && pay.length) {
       const p = await sb.rpc("pay_sale_multi", { p_sale: s.id, p_lines: pay });
       if (p.error) { toast(`Invoice ${s.invoice_no} tersimpan, tapi pembayaran GAGAL: ${esc(p.error.message)}. Buka di Transaksi tertunda.`, "err"); afterSave(); return; }
@@ -765,7 +804,7 @@ function saveNew(payAndPrint) {
 }
 
 function afterSave() {
-  refreshStock(); refreshPending(); newInvoice();
+  refreshStock(); refreshPending(); newInvoice(); refreshQueue();
 }
 
 function saveAdditions() {

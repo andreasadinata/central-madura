@@ -48,6 +48,7 @@
     <div class="logo">CB</div>
     <div class="brand grow"><b>Admin</b><span id="who">—</span></div>
     <span id="branchSw"></span>
+    <a href="queue.html"><button>Antrian</button></a>
     <a href="index.html"><button>Ke kasir</button></a>
     <button onclick="logout()">Keluar</button>
   </div>
@@ -56,6 +57,7 @@
     <button id="t-produk" onclick="tab('produk')">Produk & harga</button>
     <button id="t-pembelian" onclick="tab('pembelian')">Pembelian</button>
     <button id="t-tinjauan" onclick="tab('tinjauan')">Tinjauan harian</button>
+    <button id="t-mekanik" onclick="tab('mekanik')">Mekanik</button>
     <button id="t-persetujuan" onclick="tab('persetujuan')">Persetujuan <span id="apprBadge" class="badge b-open hide"></span></button>
     <div class="more"><button id="t-more" onclick="event.stopPropagation();$('moreMenu').classList.toggle('hide')">Lainnya ▾ </button>
       <div class="menu hide" id="moreMenu">
@@ -90,9 +92,44 @@
 
   <!-- PERSETUJUAN -->
   <div class="page hide" id="p-persetujuan">
+    <div id="discBox" class="hide" style="margin-bottom:18px">
+      <h3 style="font-size:14px;margin-bottom:8px">Harga turun — menunggu owner <span class="small muted" style="font-weight:400">· invoice tidak bisa dibayar sebelum diputuskan. Tolak = kembali ke harga normal.</span></h3>
+      <div class="panel"><table><thead><tr><th>Waktu</th><th>Invoice</th><th>Kasir</th><th>Pelanggan</th><th>Barang / jasa</th><th class="num">Qty</th><th class="num">Harga normal</th><th class="num">Diminta</th><th class="num">Potongan</th><th>Alasan</th><th></th></tr></thead><tbody id="disctable"></tbody></table></div>
+    </div>
     <div class="bar"><div class="seg2" style="width:360px"><button id="apF0" class="on" onclick="apFilter('pending')">Menunggu</button><button id="apF1" onclick="apFilter('approved')">Disetujui</button><button id="apF2" onclick="apFilter('rejected')">Ditolak / ditarik</button></div>
       <span class="small muted" id="apHint"></span></div>
     <div class="panel"><table><thead><tr><th>No</th><th>Tanggal</th><th>Cabang</th><th>Jenis</th><th>Keterangan</th><th>Oleh</th><th>Status</th><th class="num">Barang +</th><th class="num">Barang −</th><th class="num">Nilai selisih</th></tr></thead><tbody id="aptable"></tbody></table></div>
+  </div>
+
+  <!-- MEKANIK -->
+  <div class="page hide" id="p-mekanik" style="max-width:1400px">
+    <div class="bar">
+      <b style="font-size:14px">Kinerja mekanik</b>
+      <select id="mkLoc" style="max-width:200px" onchange="loadPerf()"></select>
+      <input type="date" id="mkFrom" style="width:160px" onchange="loadPerf()"> – <input type="date" id="mkTo" style="width:160px" onchange="loadPerf()">
+      <button class="small" onclick="mkRange('today')">Hari ini</button>
+      <button class="small" onclick="mkRange('payroll')">Periode gaji (26–25)</button>
+      <button class="small" onclick="mkRange('month')">Bulan ini</button>
+      <span class="grow"></span><button class="small" onclick="perfCsv()">CSV</button>
+    </div>
+    <p class="small muted" style="margin-bottom:8px">Menit kerja = waktu mekanik di mobil (sejak ditugaskan sampai Selesai) <b>dikurangi</b> beli barang di luar, istirahatnya sendiri, dan Jumatan. Hanya mobil berstatus Selesai. Klik baris untuk daftar mobilnya.</p>
+    <div class="panel" style="margin-bottom:22px"><table><thead><tr><th>Mekanik</th><th>Cabang</th><th class="num">Hari masuk</th><th class="num">Mobil</th><th class="num">Sendiri / tim</th><th class="num">Quick / General</th><th class="num">Menit kerja</th><th class="num">Rata² / mobil</th><th class="num">Beli barang</th><th class="num">Tanda lambat</th></tr></thead><tbody id="perftable"></tbody></table></div>
+
+    <div class="grid2" style="grid-template-columns:1fr 1fr;gap:18px;align-items:start">
+      <div>
+        <div class="bar"><b style="font-size:14px">Daftar mekanik — <span id="mkBranch"></span></b><span class="grow"></span>
+          <input id="mkNew" placeholder="Nama mekanik baru" style="width:200px"><button class="primary small" onclick="addMechanic()">+ Tambah</button></div>
+        <div class="panel"><table><thead><tr><th>Nama</th><th>Status</th><th></th></tr></thead><tbody id="mktable"></tbody></table></div>
+        <p class="tiny muted" style="margin-top:6px">Mekanik dipilih masuk/tidak setiap hari di halaman Antrian. Nonaktif = sudah tidak bekerja (riwayat tetap ada).</p>
+      </div>
+      <div>
+        <b style="font-size:14px">Halaman</b>
+        <div class="panel" style="padding:14px;margin-top:8px">
+          <div class="small" style="margin-bottom:10px"><b>Antrian (untuk admin di depan):</b><br><a id="qLink" target="_blank"></a></div>
+          <div class="small"><b>Layar TV pelanggan</b> (tanpa login, khusus cabang ini — jangan disebar):<br><a id="tvLink" target="_blank" style="word-break:break-all"></a></div>
+        </div>
+      </div>
+    </div>
   </div>
 
   <!-- PENJUALAN -->
@@ -326,6 +363,10 @@
   </div>
 </div>
 
+<div class="overlay" id="jobsModal"><div class="modal" style="width:900px">
+  <header><h3 id="jbTitle">—</h3><button onclick="closeModal('jobsModal')">Tutup</button></header>
+  <div class="body" style="padding:0"><table><thead><tr><th>Tanggal</th><th>No</th><th>Plat</th><th>Jalur</th><th>Mulai</th><th>Selesai</th><th class="num">Kerja</th><th class="num">Beli barang</th><th>Tim</th><th>Invoice</th><th class="num">Total invoice</th></tr></thead><tbody id="jbtable"></tbody></table></div>
+</div></div>
 <div id="toast"></div>
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
@@ -336,7 +377,7 @@ let cats = [], products = [], tiers = {}, stock = {}, lists = [], locations = []
 let defaultList = null, kind = "barang", showList = null, sortKey = "name", sortDir = 1;
 const todayJkt = () => new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Jakarta" });
 const closeModal = id => $(id).classList.remove("open");
-const TABS = ["persetujuan", "penjualan", "produk", "pembelian", "opname", "pelanggan", "tinjauan", "rekening", "pengguna"];
+const TABS = ["mekanik", "persetujuan", "penjualan", "produk", "pembelian", "opname", "pelanggan", "tinjauan", "rekening", "pengguna"];
 
 authGate(start, ["owner", "admin"]);
 
@@ -353,6 +394,7 @@ async function start() {
   let sqT; $("sQ").addEventListener("input", () => { clearTimeout(sqT); sqT = setTimeout(renderSales, 250); });
   tab(TABS.includes(location.hash.slice(1)) ? location.hash.slice(1) : "penjualan");
   loadApprovals(true); branchSwitcher($("branchSw"));
+  setInterval(() => { if (!document.hidden) loadApprovals(!$("p-persetujuan").classList.contains("hide") ? false : true); }, 30000);
   arrowNav("sdModal", () => salesRows, () => curSaleId, showSale);
   arrowNav("pdModal", () => purchaseRows, () => currentPurchase?.id, showPurchase);
   arrowNav("saModal", () => adjRows, () => saCur?.id, showAdjustment);
@@ -366,6 +408,7 @@ function tab(name) {
   $("t-more").firstChild.textContent = MORE.includes(name) ? $("t-" + name).textContent + " ▾ " : "Lainnya ▾ ";
   history.replaceState(null, "", "#" + name);
   if (name === "tinjauan") loadReview();
+  if (name === "mekanik") loadMechanics();
   if (name === "pengguna") loadUsers();
   if (name === "rekening") loadBanks();
   if (name === "pembelian") loadPurchases();
@@ -892,9 +935,19 @@ const adjRow = (a, withLoc) => {
 // One inbox for everything that waits for the owner (today: stock counts from all branches).
 async function loadApprovals(badgeOnly) {
   const sel = "*, stock_adjustment_items(diff, unit_cost), locations(code), creator:profiles!stock_adjustments_created_by_fkey(full_name)";
-  const { count } = await sb.from("stock_adjustments").select("id", { count: "exact", head: true }).eq("status", "pending");
-  $("apprBadge").textContent = count || ""; $("apprBadge").classList.toggle("hide", !count);
+  const [{ count }, disc] = await Promise.all([
+    sb.from("stock_adjustments").select("id", { count: "exact", head: true }).eq("status", "pending"),
+    sb.rpc("pending_discounts")]);
+  const dl = disc.data || [], total = (count || 0) + dl.length;
+  $("apprBadge").textContent = total || ""; $("apprBadge").classList.toggle("hide", !total);
   if (badgeOnly) return;
+  $("discBox").classList.toggle("hide", !dl.length && !disc.error);
+  $("disctable").innerHTML = disc.error ? `<tr><td colspan="11" class="err">${esc(disc.error.message)}</td></tr>` : dl.map(d => `<tr>
+    <td class="small">${new Date(d.at).toLocaleString("id-ID", { timeZone: "Asia/Jakarta" })}</td>
+    <td><b>${esc(d.invoice)}</b><div class="tiny muted">${esc(d.branch)}</div></td><td>${esc(d.cashier || "")}</td><td>${esc(d.customer || "")}</td>
+    <td>${esc(d.product)}</td><td class="num">${num(d.qty)}</td><td class="num">${num(d.standard_price)}</td><td class="num"><b>${num(d.unit_price)}</b></td>
+    <td class="num" style="color:var(--red)">−${num((d.standard_price - d.unit_price) * d.qty)}</td><td class="small">${esc(d.reason || "")}</td>
+    <td style="white-space:nowrap">${ME.role === "owner" ? `<button class="go small" onclick="decideDisc(${d.item_id},true)">Setujui</button> <button class="small danger" onclick="decideDisc(${d.item_id},false)">Tolak</button>` : `<span class="tiny muted">menunggu owner</span>`}</td></tr>`).join("");
   $("apHint").textContent = ME.role === "owner" ? "Klik untuk melihat detail, lalu Setujui / Tolak. ← → untuk pindah." : "Hanya owner yang bisa menyetujui. Anda bisa menarik hitungan yang Anda kirim.";
   let q = sb.from("stock_adjustments").select(sel).order("id", { ascending: false }).limit(200);
   q = apMode === "rejected" ? q.in("status", ["rejected", "withdrawn"]) : q.eq("status", apMode);
@@ -902,6 +955,105 @@ async function loadApprovals(badgeOnly) {
   if (error) { $("aptable").innerHTML = `<tr><td colspan="10" class="err">${esc(error.message)}</td></tr>`; return; }
   adjRows = data;
   $("aptable").innerHTML = data.map(a => adjRow(a, true)).join("") || `<tr><td colspan="10" class="muted">${apMode === "pending" ? "Tidak ada yang menunggu." : "Tidak ada."}</td></tr>`;
+}
+
+async function decideDisc(item, ok) {
+  if (!ok && !confirm("Tolak? Harga baris ini kembali ke harga normal dan total invoice naik.")) return;
+  const { error } = await sb.rpc("decide_discount", { p_item: item, p_approve: ok });
+  if (error) { toast(esc(error.message), "err", 6000); return; }
+  toast(ok ? "Disetujui — invoice bisa dibayar." : "Ditolak — harga kembali normal.");
+  loadApprovals();
+}
+
+// ═══════════ MEKANIK ═══════════
+let mechRows = [], perfRows = [], locList = [];
+const ymd = d => d.toLocaleDateString("en-CA", { timeZone: "Asia/Jakarta" });
+function mkRange(kind) {
+  const now = new Date(), t = new Date(now.toLocaleString("en-US", { timeZone: "Asia/Jakarta" }));
+  let from = new Date(t), to = new Date(t);
+  if (kind === "month") from = new Date(t.getFullYear(), t.getMonth(), 1);
+  if (kind === "payroll") {   // 26th of last month .. 25th of this month (or this 26th .. next 25th)
+    from = t.getDate() >= 26 ? new Date(t.getFullYear(), t.getMonth(), 26) : new Date(t.getFullYear(), t.getMonth() - 1, 26);
+    to = new Date(from.getFullYear(), from.getMonth() + 1, 25);
+  }
+  const f = d => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  $("mkFrom").value = f(from); $("mkTo").value = f(to); loadPerf();
+}
+async function loadMechanics() {
+  if (!locList.length) {
+    const { data } = await sb.from("locations").select("id,code,name,display_token").eq("is_active", true).order("id");
+    locList = data || [];
+    $("mkLoc").innerHTML = (ME.role === "owner" ? `<option value="">Semua cabang</option>` : "") +
+      locList.filter(l => ME.role === "owner" || l.id === ME.location_id).map(l => `<option value="${l.id}">${esc(l.code)}</option>`).join("");
+    if (ME.role !== "owner") $("mkLoc").disabled = true;
+    mkRange("today");
+  } else loadPerf();
+  const here = locList.find(l => l.id === ME.location_id) || {};
+  $("mkBranch").textContent = here.code || "";
+  const base = location.href.replace(/admin\.html.*$/, "");
+  $("qLink").href = $("qLink").textContent = base + "queue.html";
+  $("tvLink").href = $("tvLink").textContent = here.display_token ? base + "display.html?t=" + here.display_token : "";
+  const { data, error } = await sb.from("mechanics").select("*").eq("location_id", ME.location_id).order("is_active", { ascending: false }).order("name");
+  if (error) { $("mktable").innerHTML = `<tr><td colspan="3" class="err">${esc(error.message)}</td></tr>`; return; }
+  mechRows = data;
+  $("mktable").innerHTML = data.map(m => `<tr class="${m.is_active ? "" : "off"}"><td><b>${esc(m.name)}</b></td>
+    <td>${m.is_active ? '<span class="badge b-paid">Aktif</span>' : '<span class="badge b-void">Nonaktif</span>'}</td>
+    <td style="white-space:nowrap;text-align:right"><button class="link small" onclick="renameMechanic(${m.id})">ganti nama</button> &nbsp;
+      <button class="link small" onclick="toggleMechanic(${m.id})">${m.is_active ? "nonaktifkan" : "aktifkan"}</button></td></tr>`).join("")
+    || `<tr><td colspan="3" class="muted">Belum ada mekanik. Tambahkan di atas.</td></tr>`;
+}
+async function addMechanic() {
+  const name = $("mkNew").value.trim();
+  if (!name) { toast("Isi nama mekanik.", "err"); return; }
+  const { error } = await sb.from("mechanics").insert({ location_id: ME.location_id, name });
+  if (error) { toast(/duplicate|unique/i.test(error.message) ? `Nama "${esc(name)}" sudah ada di cabang ini.` : esc(error.message), "err"); return; }
+  $("mkNew").value = ""; toast("Mekanik ditambahkan."); loadMechanics();
+}
+async function renameMechanic(id) {
+  const m = mechRows.find(x => x.id === id), name = prompt("Nama baru:", m.name);
+  if (!name || !name.trim() || name.trim() === m.name) return;
+  const { error } = await sb.from("mechanics").update({ name: name.trim() }).eq("id", id);
+  if (error) { toast(esc(error.message), "err"); return; }
+  loadMechanics();
+}
+async function toggleMechanic(id) {
+  const m = mechRows.find(x => x.id === id);
+  if (m.is_active && !confirm(`Nonaktifkan ${m.name}? Dia tidak muncul lagi di Antrian. Riwayat kerjanya tetap ada.`)) return;
+  const { error } = await sb.from("mechanics").update({ is_active: !m.is_active }).eq("id", id);
+  if (error) { toast(esc(error.message), "err"); return; }
+  loadMechanics();
+}
+async function loadPerf() {
+  if (!$("mkFrom").value || !$("mkTo").value) return;
+  const { data, error } = await sb.rpc("q_performance", { p_from: $("mkFrom").value, p_to: $("mkTo").value, p_loc: Number($("mkLoc").value) || null });
+  if (error) { $("perftable").innerHTML = `<tr><td colspan="10" class="err">${esc(error.message)}</td></tr>`; return; }
+  perfRows = data;
+  $("perftable").innerHTML = data.map(r => `<tr class="click" onclick="showJobs(${r.mechanic_id})">
+    <td><b>${esc(r.mechanic)}</b></td><td>${esc(r.branch)}</td><td class="num">${r.days_worked}</td><td class="num"><b>${r.jobs}</b></td>
+    <td class="num">${r.solo_jobs} / ${r.team_jobs}</td><td class="num">${r.quick_jobs} / ${r.general_jobs}</td>
+    <td class="num">${num(r.work_min)}<div class="tiny muted">${(r.work_min / 60).toFixed(1)} jam</div></td>
+    <td class="num">${r.avg_min == null ? "—" : num(r.avg_min) + " mnt"}</td><td class="num">${r.paused_min ? num(r.paused_min) + " mnt" : "—"}</td>
+    <td class="num">${r.flags ? r.flags + (r.flags_unexplained ? ` <span style="color:var(--red)">(${r.flags_unexplained} belum)</span>` : "") : "—"}</td></tr>`).join("")
+    || `<tr><td colspan="10" class="muted">Belum ada data.</td></tr>`;
+}
+async function showJobs(id) {
+  const r = perfRows.find(x => x.mechanic_id === id);
+  $("jbTitle").textContent = `${r.mechanic} — ${$("mkFrom").value} s/d ${$("mkTo").value}`;
+  $("jbtable").innerHTML = `<tr><td colspan="11" class="muted">Memuat…</td></tr>`; $("jobsModal").classList.add("open");
+  const { data, error } = await sb.rpc("q_jobs_detail", { p_from: $("mkFrom").value, p_to: $("mkTo").value, p_mech: id });
+  if (error) { $("jbtable").innerHTML = `<tr><td colspan="11" class="err">${esc(error.message)}</td></tr>`; return; }
+  const t = x => new Date(x).toLocaleTimeString("id-ID", { hour: "2-digit", minute: "2-digit", timeZone: "Asia/Jakarta" });
+  $("jbtable").innerHTML = data.map(j => `<tr><td class="small">${j.day}</td><td><b>${esc(j.code)}</b></td><td>${esc(j.plate)}</td><td>${j.lane}</td>
+    <td>${t(j.taken_at)}</td><td>${t(j.done_at)}</td><td class="num">${num(j.work_min)} mnt</td><td class="num">${j.paused_min ? num(j.paused_min) + " mnt" : "—"}</td>
+    <td class="small">${esc(j.team || "")}</td><td>${j.invoice ? esc(j.invoice) : '<span class="tiny muted">belum ada</span>'}</td>
+    <td class="num">${j.sale_total == null ? "" : num(j.sale_total)}</td></tr>`).join("") || `<tr><td colspan="11" class="muted">Tidak ada mobil.</td></tr>`;
+}
+function perfCsv() {
+  const head = ["Mekanik","Cabang","Hari masuk","Mobil","Sendiri","Tim","Quick","General","Menit kerja","Rata2 per mobil","Menit beli barang","Tanda lambat","Tanda belum dijelaskan"];
+  const rows = perfRows.map(r => [r.mechanic, r.branch, r.days_worked, r.jobs, r.solo_jobs, r.team_jobs, r.quick_jobs, r.general_jobs, r.work_min, r.avg_min ?? "", r.paused_min, r.flags, r.flags_unexplained]);
+  const csv = [head, ...rows].map(r => r.map(v => `"${String(v).replace(/"/g, '""')}"`).join(",")).join("\n");
+  const a = document.createElement("a"); a.href = URL.createObjectURL(new Blob(["\ufeff" + csv], { type: "text/csv" }));
+  a.download = `kinerja-mekanik_${$("mkFrom").value}_${$("mkTo").value}.csv`; a.click();
 }
 
 async function showAdjustment(id) {

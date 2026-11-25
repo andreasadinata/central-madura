@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Antrian</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800&display=swap');
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{font-family:Inter,system-ui,sans-serif;background:#f4f5f7;color:#15171c;min-height:100vh;font-variant-numeric:tabular-nums}
+  header{display:flex;align-items:center;justify-content:space-between;padding:22px 36px;background:#fff;border-bottom:1px solid #e3e5ea}
+  header h1{font-size:30px;font-weight:800}
+  header .clock{font-size:30px;font-weight:700;color:#3b10b5}
+  main{display:grid;grid-template-columns:1fr 1fr;gap:24px;padding:24px 36px}
+  .lane{background:#fff;border:1px solid #e3e5ea;border-radius:14px;overflow:hidden}
+  .lane h2{font-size:26px;font-weight:800;color:#fff;padding:16px 24px}
+  .q h2{background:#0f7b5a} .g h2{background:#1d4ed8}
+  .sec{padding:16px 24px}
+  .sec h3{font-size:15px;text-transform:uppercase;letter-spacing:.08em;color:#6b7280;margin-bottom:10px}
+  .item{display:flex;justify-content:space-between;align-items:center;padding:12px 0;border-bottom:1px solid #eef0f3}
+  .item:last-child{border-bottom:none}
+  .code{font-size:34px;font-weight:800;width:110px}
+  .plate{font-size:30px;font-weight:600;letter-spacing:.05em;flex:1}
+  .tag{font-size:16px;font-weight:700;padding:6px 12px;border-radius:8px}
+  .serving .tag{background:#e7f0fd;color:#1d4ed8}
+  .paused .tag{background:#fff6d6;color:#7a5200}
+  .empty{font-size:20px;color:#9ca3af;padding:8px 0}
+  .err{padding:40px;font-size:22px;color:#c4362b}
+</style>
+</head>
+<body>
+<header><h1 id="branch">Antrian</h1><div class="clock" id="clock"></div></header>
+<main id="main"></main>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="config.js"></script>
+<script>
+// Customer TV. Opened with ?t=<branch display token> (from Admin → Mekanik). No login, read-only.
+const sb = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+const token = new URLSearchParams(location.search).get("t") || "";
+const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;" }[c]));
+setInterval(() => { document.getElementById("clock").textContent = new Date().toLocaleTimeString("id-ID", { hour: "2-digit", minute: "2-digit", timeZone: "Asia/Jakarta" }); }, 1000);
+
+function lane(cls, title, list) {
+  const serving = list.filter(t => t.status === "Serving"), waiting = list.filter(t => t.status === "Waiting");
+  const row = t => `<div class="item ${t.paused ? "paused" : t.status === "Serving" ? "serving" : ""}">
+    <span class="code">${esc(t.code)}</span><span class="plate">${esc(t.plate)}</span>
+    ${t.status === "Serving" ? `<span class="tag">${t.paused ? "Menunggu barang" : "Dikerjakan"}</span>` : ""}</div>`;
+  return `<div class="lane ${cls}"><h2>${title}</h2>
+    <div class="sec"><h3>Sedang dikerjakan</h3>${serving.map(row).join("") || `<div class="empty">—</div>`}</div>
+    <div class="sec"><h3>Antrian (${waiting.length})</h3>${waiting.map(row).join("") || `<div class="empty">Tidak ada antrian</div>`}</div></div>`;
+}
+
+async function load() {
+  const { data, error } = await sb.rpc("q_public_board", { p_token: token });
+  if (error || !data) {
+    document.getElementById("main").innerHTML = `<div class="err">${error ? esc(error.message) : "Link layar ini tidak valid. Ambil link yang benar di Admin → Mekanik."}</div>`;
+    return;
+  }
+  document.getElementById("branch").textContent = "Antrian — " + data.branch;
+  document.getElementById("main").innerHTML =
+    lane("q", "⚡ Quick Service", data.tickets.filter(t => t.lane === "Quick")) +
+    lane("g", "🔧 General Service", data.tickets.filter(t => t.lane === "General"));
+}
+load(); setInterval(load, 10000);
+</script>
+</body>
+</html>
