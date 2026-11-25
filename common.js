@@ -139,3 +139,40 @@ function nextTier(tiersByProduct, productId, listId, defaultListId, qty) {
   return rows.filter(t => t.price_list_id === own && Number(t.min_qty) > qty)
              .sort((a, b) => a.min_qty - b.min_qty)[0] || null;
 }
+
+
+// Owners work across branches: a dropdown in the topbar switches which branch they are working in.
+// (Their profile's branch changes; everything they sell, buy or count after that goes to that branch.)
+async function branchSwitcher(el) {
+  if (!el || ME.role !== "owner") return;
+  const { data } = await sb.from("locations").select("id,code,name").eq("is_active", true).order("id");
+  el.innerHTML = `<select title="Cabang tempat Anda bekerja sekarang" style="width:auto;padding:6px 10px">${(data || []).map(l =>
+    `<option value="${l.id}" ${l.id === ME.location_id ? "selected" : ""}>${esc(l.code)} · ${esc(l.name)}</option>`).join("")}</select>`;
+  el.firstChild.onchange = async e => {
+    const { error } = await sb.from("profiles").update({ location_id: Number(e.target.value) }).eq("id", ME.id);
+    if (error) { toast("Gagal pindah cabang: " + esc(error.message), "err"); return; }
+    location.reload();
+  };
+}
+
+// ← / → through a list of records while a detail window is open
+function arrowNav(modalId, getList, getCurrentId, open) {
+  document.addEventListener("keydown", e => {
+    if (!$(modalId).classList.contains("open") || !["ArrowLeft", "ArrowRight"].includes(e.key)) return;
+    if (["INPUT", "SELECT", "TEXTAREA"].includes(document.activeElement?.tagName)) return;
+    const list = getList() || [], i = list.findIndex(r => r.id === getCurrentId());
+    const j = i + (e.key === "ArrowRight" ? 1 : -1);
+    if (i < 0 || j < 0 || j >= list.length) { toast(j < 0 ? "Sudah yang pertama." : "Sudah yang terakhir.", "ok", 1200); return; }
+    e.preventDefault(); open(list[j].id);
+  });
+}
+
+// colored status banner for a sale
+function saleStatusBanner(s) {
+  const paid = Number(s.paid_amount), tot = Number(s.total);
+  const [bg, fg, txt] = s.status === "void" ? ["#eceef1", "#4b5563", "VOID"]
+    : s.status === "paid" ? ["var(--green-soft)", "var(--green)", "LUNAS"]
+    : paid > 0 ? ["#e7f0fd", "#1d4ed8", `SEBAGIAN — dibayar ${num(paid)}, sisa ${num(tot - paid)}`]
+    : ["var(--red-soft)", "var(--red)", `BELUM DIBAYAR — sisa ${num(tot)}`];
+  return `<div style="background:${bg};color:${fg};font-weight:700;padding:10px 14px;border-radius:var(--r);margin-bottom:12px">${txt}${s.is_tempo ? " · TEMPO" : ""}</div>`;
+}

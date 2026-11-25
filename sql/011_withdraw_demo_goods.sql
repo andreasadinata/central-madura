@@ -1,0 +1,4 @@
+-- 25 Nov 2026 (Supabase migration "v6_withdraw_opname_demo_goods").
+-- • stock_adjustments.status + 'withdrawn'; withdraw_stock_adjustment(id, reason): sender or owner pulls back
+--   a pending count (e.g. after "coba cari lagi"), then sends a new one. Sent counts are never edited.
+-- • 20 more DEMO-* goods with tier prices and opening stock at CBP, for testing.

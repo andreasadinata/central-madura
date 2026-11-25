@@ -47,6 +47,7 @@
   <div class="topbar">
     <div class="logo">CB</div>
     <div class="brand grow"><b>Admin</b><span id="who">—</span></div>
+    <span id="branchSw"></span>
     <a href="index.html"><button>Ke kasir</button></a>
     <button onclick="logout()">Keluar</button>
   </div>
@@ -55,7 +56,8 @@
     <button id="t-produk" onclick="tab('produk')">Produk & harga</button>
     <button id="t-pembelian" onclick="tab('pembelian')">Pembelian</button>
     <button id="t-tinjauan" onclick="tab('tinjauan')">Tinjauan harian</button>
-    <div class="more"><button id="t-more" onclick="event.stopPropagation();$('moreMenu').classList.toggle('hide')">Lainnya ▾ <span id="pendingBadge" class="badge b-open hide"></span></button>
+    <button id="t-persetujuan" onclick="tab('persetujuan')">Persetujuan <span id="apprBadge" class="badge b-open hide"></span></button>
+    <div class="more"><button id="t-more" onclick="event.stopPropagation();$('moreMenu').classList.toggle('hide')">Lainnya ▾ </button>
       <div class="menu hide" id="moreMenu">
         <button id="t-opname" onclick="tab('opname')">Stok opname</button>
         <button id="t-pelanggan" onclick="tab('pelanggan')">Pelanggan</button>
@@ -84,6 +86,13 @@
     <div class="panel"><table>
       <thead id="phead"></thead>
       <tbody id="ptable"></tbody></table></div>
+  </div>
+
+  <!-- PERSETUJUAN -->
+  <div class="page hide" id="p-persetujuan">
+    <div class="bar"><div class="seg2" style="width:360px"><button id="apF0" class="on" onclick="apFilter('pending')">Menunggu</button><button id="apF1" onclick="apFilter('approved')">Disetujui</button><button id="apF2" onclick="apFilter('rejected')">Ditolak / ditarik</button></div>
+      <span class="small muted" id="apHint"></span></div>
+    <div class="panel"><table><thead><tr><th>No</th><th>Tanggal</th><th>Cabang</th><th>Jenis</th><th>Keterangan</th><th>Oleh</th><th>Status</th><th class="num">Barang +</th><th class="num">Barang −</th><th class="num">Nilai selisih</th></tr></thead><tbody id="aptable"></tbody></table></div>
   </div>
 
   <!-- PENJUALAN -->
@@ -277,6 +286,7 @@
   <div class="modal" style="width:760px">
     <header><h3 id="sdTitle">Invoice</h3><button onclick="closeModal('sdModal')">Tutup</button></header>
     <div class="body" id="sdBody"></div>
+    <footer id="sdFoot"></footer>
   </div>
 </div>
 
@@ -299,7 +309,7 @@
   <div class="modal" style="width:720px">
     <header><h3 id="pdTitle">Pembelian</h3><button onclick="closeModal('pdModal')">Tutup</button></header>
     <div class="body" id="pdBody"></div>
-    <footer><button class="primary" onclick="openPurchase(currentPurchase)">Buat koreksi</button></footer>
+    <footer><span class="small muted" style="margin-right:auto">← → pindah</span><button class="primary" onclick="openPurchase(currentPurchase)">Buat koreksi</button></footer>
   </div>
 </div>
 
@@ -326,7 +336,7 @@ let cats = [], products = [], tiers = {}, stock = {}, lists = [], locations = []
 let defaultList = null, kind = "barang", showList = null, sortKey = "name", sortDir = 1;
 const todayJkt = () => new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Jakarta" });
 const closeModal = id => $(id).classList.remove("open");
-const TABS = ["penjualan", "produk", "pembelian", "opname", "pelanggan", "tinjauan", "rekening", "pengguna"];
+const TABS = ["persetujuan", "penjualan", "produk", "pembelian", "opname", "pelanggan", "tinjauan", "rekening", "pengguna"];
 
 authGate(start, ["owner", "admin"]);
 
@@ -341,7 +351,10 @@ async function start() {
   ["sLoc","sStatus","sDisc","sFrom","sTo"].forEach(id => $(id).addEventListener("change", loadSales));
   let sqT; $("sQ").addEventListener("input", () => { clearTimeout(sqT); sqT = setTimeout(renderSales, 250); });
   tab(TABS.includes(location.hash.slice(1)) ? location.hash.slice(1) : "penjualan");
-  loadAdjustments();
+  loadApprovals(true); branchSwitcher($("branchSw"));
+  arrowNav("sdModal", () => salesRows, () => curSaleId, showSale);
+  arrowNav("pdModal", () => purchaseRows, () => currentPurchase?.id, showPurchase);
+  arrowNav("saModal", () => adjRows, () => saCur?.id, showAdjustment);
 }
 
 const MORE = ["opname", "pelanggan", "rekening", "pengguna"];
@@ -355,6 +368,7 @@ function tab(name) {
   if (name === "pengguna") loadUsers();
   if (name === "rekening") loadBanks();
   if (name === "pembelian") loadPurchases();
+  if (name === "persetujuan") loadApprovals();
   if (name === "penjualan" && !salesRows) loadSales();
   if (name === "opname") { renderOpname(); loadAdjustments(); }
   if (name === "pelanggan" && !custRows.length) searchCustomers(true);
@@ -616,7 +630,9 @@ function renderSales() {
   if (salesRows.length > 1000) $("stable").insertAdjacentHTML("beforeend", `<tr><td colspan="9" class="muted">Menampilkan 1.000 dari ${num(salesRows.length)}. Export CSV berisi semuanya.</td></tr>`);
 }
 
+let curSaleId = null;
 async function showSale(id) {
+  curSaleId = id;
   const { data: s, error } = await sb.from("sales")
     .select("*, customers(name,phone,address), vehicles(plate,color,car_models(brand,model)), locations(name), cashier:profiles!sales_cashier_id_fkey(full_name), sale_items(*, products(sku,name)), payments(*, bank_accounts(name))")
     .eq("id", id).single();
@@ -626,7 +642,9 @@ async function showSale(id) {
   const v = s.vehicles, veh = v ? [v.plate, v.car_models && v.car_models.brand + " " + v.car_models.model, v.color].filter(Boolean).join(" · ") : "tanpa mobil";
   const act = { sale_create: "dibuat", sale_add_items: "item ditambah", sale_cancel_item: "item dibatalkan", sale_pay: "pembayaran", sale_refund: "uang dikembalikan", sale_void: "void", sale_date_change: "tanggal diubah" };
   $("sdTitle").textContent = s.invoice_no + (s.revision > 1 ? " · Rev " + s.revision : "");
-  $("sdBody").innerHTML = `<p class="small" style="margin-bottom:10px">${esc(s.locations.name)} · tanggal <b>${s.business_date}</b> · kasir ${esc(s.cashier?.full_name || "")}<br>
+  $("sdFoot").innerHTML = `<span class="small muted" style="margin-right:auto">← → pindah invoice</span>
+    <a href="index.html?sale=${s.id}"><button class="primary">${s.status === "open" ? "Buka di kasir (bayar / cetak)" : "Buka di kasir"}</button></a>`;
+  $("sdBody").innerHTML = saleStatusBanner(s) + `<p class="small" style="margin-bottom:10px">${esc(s.locations.name)} · tanggal <b>${s.business_date}</b> · kasir ${esc(s.cashier?.full_name || "")}<br>
       ${esc(s.customers.name)} · ${esc(s.customers.phone || "")} · ${esc(s.customers.address || "")}<br>Kendaraan: ${esc(veh)}${s.status === "void" ? `<br><b style="color:var(--red)">VOID: ${esc(s.void_reason)}</b>` : ""}</p>
     <table><thead><tr><th>Item</th><th class="num">Qty</th><th class="num">Harga</th><th class="num">Normal</th><th class="num">Jumlah</th></tr></thead><tbody>
     ${s.sale_items.map(i => `<tr class="${i.cancelled_at ? "off" : ""}"><td>${esc(i.products.name)}${i.cancelled_at ? `<div class="tiny" style="color:var(--red)">dibatalkan: ${esc(i.cancel_reason)}</div>` : ""}${i.price_reason ? `<div class="tiny" style="color:var(--warn-text)">alasan harga: ${esc(i.price_reason)}</div>` : ""}</td>
@@ -651,7 +669,7 @@ function exportSales() {
 }
 
 // ═══════════ PURCHASES ═══════════
-let currentPurchase = null, puLines = [], puCorrects = null;
+let currentPurchase = null, puLines = [], puCorrects = null, purchaseRows = [];
 const goodsById = id => products.find(p => p.id === id);
 const goodsByLabel = txt => products.find(p => !p.is_service && (p.sku + " · " + p.name) === txt.trim()) ||
   products.find(p => !p.is_service && (p.sku.toUpperCase() === txt.trim().toUpperCase() || (p.barcode && p.barcode === txt.trim())));
@@ -660,6 +678,7 @@ async function loadPurchases() {
   const { data, error } = await sb.from("purchases").select("*, suppliers(name)")
     .eq("location_id", ME.location_id).order("id", { ascending: false }).limit(500);
   if (error) { $("putable").innerHTML = `<tr><td colspan="6" class="err">${esc(error.message)}</td></tr>`; return; }
+  purchaseRows = data;
   $("putable").innerHTML = data.map(x => `<tr class="click" onclick="showPurchase(${x.id})">
     <td><b>${x.doc_no}</b>${x.corrects_id ? ` <span class="badge b-open">koreksi ${esc((data.find(o => o.id === x.corrects_id) || {}).doc_no || "")}</span>` : ""}</td>
     <td>${x.received_date}</td><td>${esc(x.suppliers?.name)}</td><td>${esc(x.supplier_ref || "")}</td>
@@ -673,7 +692,8 @@ async function showPurchase(id) {
   const { data: kids } = await sb.from("purchases").select("doc_no, reason, total").eq("corrects_id", id);
   currentPurchase = x;
   $("pdTitle").textContent = x.doc_no;
-  $("pdBody").innerHTML = `<p class="small" style="margin-bottom:10px">${esc(x.suppliers.name)} · terima <b>${x.received_date}</b> · nota ${esc(x.supplier_ref || "-")} · diinput ${new Date(x.entered_at).toLocaleString("id-ID", { timeZone: "Asia/Jakarta" })} oleh ${esc(x.creator?.full_name || "")}${x.reason ? `<br>Alasan koreksi: ${esc(x.reason)}` : ""}</p>
+  $("pdBody").innerHTML = `<div style="background:${x.corrects_id ? "var(--warn-bg)" : "var(--accent-soft)"};color:${x.corrects_id ? "var(--warn-text)" : "var(--accent-ink)"};font-weight:700;padding:10px 14px;border-radius:var(--r);margin-bottom:12px">${x.corrects_id ? "KOREKSI PEMBELIAN" : "PEMBELIAN"} · ${rp(x.total)}</div>
+    <p class="small" style="margin-bottom:10px">${esc(x.suppliers.name)} · terima <b>${x.received_date}</b> · nota ${esc(x.supplier_ref || "-")} · diinput ${new Date(x.entered_at).toLocaleString("id-ID", { timeZone: "Asia/Jakarta" })} oleh ${esc(x.creator?.full_name || "")}${x.reason ? `<br>Alasan koreksi: ${esc(x.reason)}` : ""}</p>
     <table><thead><tr><th>Barang</th><th class="num">Qty</th><th class="num">Harga/pcs</th><th class="num">Jumlah</th></tr></thead><tbody>
     ${x.purchase_items.map(i => `<tr><td>${esc(i.products.sku)} · ${esc(i.products.name)}</td><td class="num">${num(i.qty)}</td><td class="num">${num(i.unit_cost)}</td><td class="num">${num(i.line_total)}</td></tr>`).join("")}
     <tr><td colspan="3"><b>Total</b></td><td class="num"><b>${num(x.total)}</b></td></tr></tbody></table>
@@ -842,26 +862,44 @@ async function saveOpname() {
   if (error) { toast(esc(error.message), "err"); return; }
   opCounts = {}; $("oreason").value = "";
   toast(`Tersimpan · <b>${data.doc_no}</b> · ${data.status === "approved" ? "stok diperbarui" : "menunggu persetujuan owner"}`);
-  await loadAll(); renderOpname(); loadAdjustments();
+  await loadAll(); renderOpname(); loadAdjustments(); if (!$("p-persetujuan").classList.contains("hide")) loadApprovals();
 }
 async function loadAdjustments() {
   const { data, error } = await sb.from("stock_adjustments").select("*, stock_adjustment_items(diff, unit_cost), creator:profiles!stock_adjustments_created_by_fkey(full_name)")
     .eq("location_id", ME.location_id).order("id", { ascending: false }).limit(50);
   if (error) { $("satable").innerHTML = `<tr><td colspan="8" class="err">${esc(error.message)}</td></tr>`; return; }
-  const st = { pending: '<span class="badge b-open">Menunggu persetujuan</span>', approved: '<span class="badge b-paid">Disetujui</span>', rejected: '<span class="badge b-void">Ditolak</span>' };
-  $("satable").innerHTML = data.map(a => {
-    const it = a.stock_adjustment_items, val = it.reduce((s, i) => s + Number(i.diff) * Number(i.unit_cost || 0), 0);
-    return `<tr class="click ${a.status === "rejected" ? "off" : ""}" onclick="showAdjustment(${a.id})"><td><b>${a.doc_no}</b></td>
-      <td class="small">${new Date(a.created_at).toLocaleString("id-ID", { timeZone: "Asia/Jakarta" })}</td>
-      <td>${esc(a.reason)}</td><td>${esc(a.creator?.full_name || "")}</td><td>${st[a.status]}</td>
-      <td class="num" style="color:var(--green)">${it.filter(i => i.diff > 0).length || "—"}</td><td class="num" style="color:var(--red)">${it.filter(i => i.diff < 0).length || "—"}</td>
-      <td class="num" style="font-weight:600;color:${val < 0 ? "var(--red)" : val > 0 ? "var(--green)" : "inherit"}">${val > 0 ? "+" : ""}${num(val)}</td></tr>`;
-  }).join("") || `<tr><td colspan="8" class="muted">Belum ada.</td></tr>`;
-  const pend = data.filter(a => a.status === "pending").length;
-  $("pendingBadge").textContent = pend ? pend + " opname" : ""; $("pendingBadge").classList.toggle("hide", !pend || ME.role !== "owner");
+  adjRows = data;
+  $("satable").innerHTML = data.map(a => adjRow(a, false)).join("") || `<tr><td colspan="8" class="muted">Belum ada.</td></tr>`;
+  loadApprovals(true);
 }
 
-let saCur = null, saMode = "all";
+let saCur = null, saMode = "all", adjRows = [], apMode = "pending";
+function apFilter(m) { apMode = m; ["pending","approved","rejected"].forEach((k, i) => $("apF" + i).classList.toggle("on", k === m)); loadApprovals(); }
+const adjRow = (a, withLoc) => {
+  const st = { pending: '<span class="badge b-open">Menunggu</span>', approved: '<span class="badge b-paid">Disetujui</span>', rejected: '<span class="badge b-void">Ditolak</span>', withdrawn: '<span class="badge b-void">Ditarik</span>' };
+  const it = a.stock_adjustment_items, val = it.reduce((s, i) => s + Number(i.diff) * Number(i.unit_cost || 0), 0);
+  return `<tr class="click ${["rejected","withdrawn"].includes(a.status) ? "off" : ""}" onclick="showAdjustment(${a.id})"><td><b>${a.doc_no}</b></td>
+    <td class="small">${new Date(a.created_at).toLocaleString("id-ID", { timeZone: "Asia/Jakarta" })}</td>
+    ${withLoc ? `<td>${esc(a.locations?.code || "")}</td><td>Stock opname</td>` : ""}
+    <td>${esc(a.reason)}</td><td>${esc(a.creator?.full_name || "")}</td><td>${st[a.status]}</td>
+    <td class="num" style="color:var(--green)">${it.filter(i => i.diff > 0).length || "—"}</td><td class="num" style="color:var(--red)">${it.filter(i => i.diff < 0).length || "—"}</td>
+    <td class="num" style="font-weight:600;color:${val < 0 ? "var(--red)" : val > 0 ? "var(--green)" : "inherit"}">${val > 0 ? "+" : ""}${num(val)}</td></tr>`;
+};
+// One inbox for everything that waits for the owner (today: stock counts from all branches).
+async function loadApprovals(badgeOnly) {
+  const sel = "*, stock_adjustment_items(diff, unit_cost), locations(code), creator:profiles!stock_adjustments_created_by_fkey(full_name)";
+  const { count } = await sb.from("stock_adjustments").select("id", { count: "exact", head: true }).eq("status", "pending");
+  $("apprBadge").textContent = count || ""; $("apprBadge").classList.toggle("hide", !count);
+  if (badgeOnly) return;
+  $("apHint").textContent = ME.role === "owner" ? "Klik untuk melihat detail, lalu Setujui / Tolak. ← → untuk pindah." : "Hanya owner yang bisa menyetujui. Anda bisa menarik hitungan yang Anda kirim.";
+  let q = sb.from("stock_adjustments").select(sel).order("id", { ascending: false }).limit(200);
+  q = apMode === "rejected" ? q.in("status", ["rejected", "withdrawn"]) : q.eq("status", apMode);
+  const { data, error } = await q;
+  if (error) { $("aptable").innerHTML = `<tr><td colspan="10" class="err">${esc(error.message)}</td></tr>`; return; }
+  adjRows = data;
+  $("aptable").innerHTML = data.map(a => adjRow(a, true)).join("") || `<tr><td colspan="10" class="muted">${apMode === "pending" ? "Tidak ada yang menunggu." : "Tidak ada."}</td></tr>`;
+}
+
 async function showAdjustment(id) {
   const { data: a, error } = await sb.from("stock_adjustments")
     .select("*, stock_adjustment_items(*, products(sku,name)), creator:profiles!stock_adjustments_created_by_fkey(full_name), decider:profiles!stock_adjustments_decided_by_fkey(full_name)").eq("id", id).single();
@@ -876,10 +914,14 @@ async function showAdjustment(id) {
     <b style="color:var(--red)">Kurang: ${dn.length} barang, ${num(dn.reduce((s, i) => s + Number(i.diff), 0))} pcs, ${rp(sumV(dn))}</b> · Bersih <b>${rp(sumV(it))}</b>
     ${a.status === "approved" ? `<br>Disetujui ${esc(a.decider?.full_name || "")}, ${new Date(a.decided_at).toLocaleString("id-ID", { timeZone: "Asia/Jakarta" })}` : ""}
     ${a.status === "rejected" ? `<br><b style="color:var(--red)">Ditolak: ${esc(a.reject_reason)}</b>` : ""}
+    ${a.status === "withdrawn" ? `<br><b style="color:var(--red)">Ditarik: ${esc(a.reject_reason)}</b>` : ""}
     ${a.status === "pending" ? `<br><b>Belum mengubah stok.</b> Stok baru berubah setelah owner menyetujui.` : ""}`;
-  $("saFoot").innerHTML = a.status === "pending" && ME.role === "owner"
-    ? `<button class="danger" onclick="decideAdj(false)">Tolak</button><button class="go" onclick="decideAdj(true)">Setujui & ubah stok</button>`
-    : `<button onclick="closeModal('saModal')">Tutup</button>`;
+  const canWithdraw = a.status === "pending" && (a.created_by === ME.id || ME.role === "owner");
+  $("saFoot").innerHTML = `<span class="small muted" style="margin-right:auto">← → pindah</span>` +
+    (canWithdraw && ME.role !== "owner" ? `<button onclick="withdrawAdj()">Tarik kembali</button>` : "") +
+    (a.status === "pending" && ME.role === "owner"
+      ? `<button class="danger" onclick="decideAdj(false)">Tolak</button><button class="go" onclick="decideAdj(true)">Setujui & ubah stok</button>`
+      : `<button onclick="closeModal('saModal')">Tutup</button>`);
   saFilter("all");
   $("saModal").classList.add("open");
 }
@@ -895,6 +937,14 @@ function saFilter(m) {
     <td class="num" style="color:${v(i) < 0 ? "var(--red)" : "var(--green)"}">${v(i) > 0 ? "+" : ""}${num(v(i))}</td><td class="small">${esc(i.note || "")}</td></tr>`).join("")
     || `<tr><td colspan="7" class="muted">Tidak ada.</td></tr>`;
 }
+async function withdrawAdj() {
+  const reason = prompt(`Tarik kembali ${saCur.doc_no}? Setelah itu kirim hitungan baru.\nAlasan (wajib), mis. "hitung ulang rak belakang":`);
+  if (!reason || !reason.trim()) return;
+  const { error } = await sb.rpc("withdraw_stock_adjustment", { p_id: saCur.id, p_reason: reason });
+  if (error) { toast(esc(error.message), "err"); return; }
+  closeModal("saModal"); toast("Ditarik. Silakan kirim hitungan yang baru."); loadAdjustments(); loadApprovals();
+}
+
 async function decideAdj(ok) {
   let reason = null;
   if (!ok) { reason = prompt("Alasan menolak (wajib), mis. \"hitung ulang, rak belakang belum\":"); if (!reason || !reason.trim()) return; }

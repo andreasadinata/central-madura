@@ -115,6 +115,7 @@
     <div class="brand grow"><b id="locName">—</b><span>Kasir: <span id="whoName">—</span></span></div>
     <span class="chip" id="invChip">INVOICE BARU</span>
     <button onclick="openTx()">Transaksi <span class="small muted">· belum lunas</span> <b id="pendingCount" style="color:var(--red)"></b></button>
+    <span id="branchSw"></span>
     <a id="adminLink" class="hide" href="admin.html"><button>Admin</button></a>
     <button onclick="logout()">Keluar</button>
   </div>
@@ -244,6 +245,9 @@ async function start() {
   } catch (e) { toast("Gagal memuat data: " + esc(errText(e)), "err"); return; }
   await setCustomer(null);
   setKind("jasa"); renderAll(); refreshPending();
+  branchSwitcher($("branchSw"));
+  const want = new URLSearchParams(location.search).get("sale");   // opened from Admin → Penjualan
+  if (want) { history.replaceState(null, "", location.pathname); await openSale(Number(want)); }
   $("q").focus();
 }
 
