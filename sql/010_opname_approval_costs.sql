@@ -1,0 +1,8 @@
+-- 25 Nov 2026 (Supabase migration "v5_opname_approval_hide_costs").
+-- • stock_adjustments.status pending/approved/rejected. Admin counts wait; owner approves via
+--   decide_stock_adjustment(id, approve, reason). Owner's own counts apply at once. The difference is
+--   fixed at counting time (counted − system then), so sales before approval don't distort it.
+-- • Purchase costs are owner/admin only: purchases, purchase_items, stock_moves, stock_adjustments(+items),
+--   suppliers readable only by owner/admin. product_stock is now a definer view exposing quantities only,
+--   for all branches. avg_cost() no longer callable from the browser.
+-- • Nothing in public is readable without login (anon revoked, also for future tables).

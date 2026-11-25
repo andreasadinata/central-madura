@@ -114,7 +114,7 @@
     <div class="logo" id="logo">CB</div>
     <div class="brand grow"><b id="locName">—</b><span>Kasir: <span id="whoName">—</span></span></div>
     <span class="chip" id="invChip">INVOICE BARU</span>
-    <button onclick="openTx()">Transaksi tertunda <b id="pendingCount" style="color:var(--red)"></b></button>
+    <button onclick="openTx()">Transaksi <span class="small muted">· belum lunas</span> <b id="pendingCount" style="color:var(--red)"></b></button>
     <a id="adminLink" class="hide" href="admin.html"><button>Admin</button></a>
     <button onclick="logout()">Keluar</button>
   </div>
@@ -171,8 +171,8 @@
     <header><h3>Transaksi</h3><button onclick="closeModal('txModal')">Tutup</button></header>
     <div class="body">
       <div class="seg2" style="max-width:320px">
-        <button id="txTabOpen" class="on" onclick="loadTx('open')">Belum lunas</button>
-        <button id="txTabToday" onclick="loadTx('today')">Semua hari ini</button>
+        <button id="txTabToday" class="on" onclick="loadTx('today')">Semua hari ini</button>
+        <button id="txTabOpen" onclick="loadTx('open')">Belum lunas</button>
       </div>
       <table>
         <thead><tr><th>Invoice</th><th>Pelanggan</th><th>Plat</th><th>Status</th><th class="num">Total</th><th class="num">Sisa</th></tr></thead>
@@ -195,11 +195,11 @@
         </div>
       </div>
       <div id="cmVehFields">
-      <div class="grid2">
+      <div class="field"><label>Mobil * <button class="link tiny hide" id="cmNewModel" onclick="newCarModel()">+ model baru</button></label><select id="cmModel" onchange="cmModelChanged()"></select></div>
+      <div class="grid2" id="cmCarFields">
         <div class="field"><label>Plat nomor *</label><input id="cmPlate" style="text-transform:uppercase"></div>
         <div class="field"><label>Warna *</label><input id="cmColor" placeholder="mis. Hitam"></div>
       </div>
-      <div class="field"><label>Mobil (merk + tipe) * <button class="link tiny hide" id="cmNewModel" onclick="newCarModel()">+ model baru</button></label><select id="cmModel"></select></div>
       </div>
       
       <div class="err" id="cmErr"></div>
@@ -248,11 +248,13 @@ async function start() {
 }
 
 async function loadMaster() {
+  const { data: locs } = await sb.from("locations").select("id,code");
+  (locs || []).forEach(l => locCodes[l.id] = l.code);
   const [c, p, t, s, pl, cm, bk] = await Promise.all([
     sb.from("categories").select("*").order("sort"),
     fetchAll(() => sb.from("products").select("id,sku,barcode,name,brand,is_service,service_group,category_id,isi_per_dus").eq("is_active", true).order("name")),
     fetchAll(() => sb.from("price_tiers").select("product_id,price_list_id,min_qty,price").order("id")),
-    fetchAll(() => sb.from("product_stock").select("product_id,qty").eq("location_id", ME.location_id).order("product_id")),
+    fetchAll(() => sb.from("product_stock").select("product_id,location_id,qty").order("product_id")),
     sb.from("price_lists").select("*"),
     fetchAll(() => sb.from("car_models").select("*").order("brand")),
     sb.from("bank_accounts").select("*").eq("is_active", true).order("id")
@@ -261,13 +263,22 @@ async function loadMaster() {
   cats = c.data; products = p; carModels = cm; banks = bk.data || [];
   byId = {}; products.forEach(x => byId[x.id] = x);
   tiers = {}; t.forEach(r => (tiers[r.product_id] ||= []).push(r));
-  stock = {}; s.forEach(r => stock[r.product_id] = Number(r.qty));
+  setStock(s);
   pl.data.forEach(l => { priceListNames[l.id] = l.name; if (l.is_default) defaultList = l.id; });
   fillModels();
 }
 
 
 // ═══════════════════════ PRODUCTS ═══════════════════════
+// stock = this branch; stockElse[pid] = [[code, qty], ...] for other branches that have it
+let stockElse = {}, locCodes = {};
+function setStock(rows) {
+  stock = {}; stockElse = {};
+  rows.forEach(r => {
+    if (r.location_id === ME.location_id) stock[r.product_id] = Number(r.qty);
+    else if (Number(r.qty) > 0) (stockElse[r.product_id] ||= []).push([locCodes[r.location_id] || "?", Number(r.qty)]);
+  });
+}
 const catName = id => (cats.find(c => c.id === id) || {}).name || "";
 const stdPrice = (pid, qty) => tierFor(tiers, pid, cust?.price_list_id, defaultList, qty);
 
@@ -302,6 +313,7 @@ function renderGrid() {
       <span class="nm">${esc(p.name)}</span>
       <span class="ft"><span class="pr">${t ? num(t.price) : "<span class='muted small'>belum ada harga</span>"}</span>
       <span class="st ${!p.is_service && st <= 0 ? "low" : ""}">${p.is_service ? "jasa" : "stok " + num(st)}</span></span>
+      ${stockElse[p.id] ? `<span class="tiny muted">cabang lain: ${stockElse[p.id].map(([c, q]) => c + " " + num(q)).join(" · ")}</span>` : ""}
     </button>`;
   }).join("");
 }
@@ -463,6 +475,7 @@ function openCustModal(mode) {
   $("cmVehFields").classList.toggle("hide", mode === "edit");
   ["cmName","cmPhone","cmAddr","cmPlate","cmColor","cmModel"].forEach(id => $(id).value = "");
   $("cmNewModel").classList.remove("hide");
+  fillModels(); cmModelChanged();
   if (mode === "new") {
     const raw = $("custQ").value.trim();
     if (/^[\d\s+-]{6,}$/.test(raw)) $("cmPhone").value = raw; else if (/^[A-Za-z]{1,2}\s*\d/.test(raw)) $("cmPlate").value = raw.toUpperCase(); else $("cmName").value = raw;
@@ -473,9 +486,11 @@ function openCustModal(mode) {
   setTimeout(() => $(mode === "vehicle" ? "cmPlate" : mode === "edit" ? (cust.phone ? "cmAddr" : "cmPhone") : "cmName").focus(), 50);
 }
 
+function cmModelChanged() { $("cmCarFields").classList.toggle("hide", $("cmModel").value === "none"); }
 function fillModels(sel) {
   const brands = [...new Set(carModels.map(m => m.brand))].sort();
-  $("cmModel").innerHTML = `<option value="">— pilih mobil —</option>` + brands.map(b => `<optgroup label="${esc(b)}">` +
+  $("cmModel").innerHTML = `<option value="">— pilih mobil —</option>` +
+    (cmMode === "new" ? `<option value="none" ${sel === "none" ? "selected" : ""}>Pembelian barang (tanpa mobil)</option>` : "") + brands.map(b => `<optgroup label="${esc(b)}">` +
     carModels.filter(m => m.brand === b).sort((x, y) => x.model.localeCompare(y.model))
       .map(m => `<option value="${m.id}" ${m.id === sel ? "selected" : ""}>${esc(m.brand + " " + m.model)}</option>`).join("") + `</optgroup>`).join("");
 }
@@ -504,7 +519,8 @@ async function saveCustModal() {
   const plate = $("cmPlate").value.trim().toUpperCase().replace(/\s+/g, " "), color = $("cmColor").value.trim();
   const need = [];
   if (cmMode !== "vehicle") { if (!name) need.push("nama"); if (!phone) need.push("no HP"); if (!addr) need.push("alamat"); }
-  if (cmMode !== "edit") { if (!plate) need.push("plat"); if (!color) need.push("warna"); if (!$("cmModel").value) need.push("mobil"); }
+  const noCar = $("cmModel").value === "none";
+  if (cmMode !== "edit") { if (!$("cmModel").value) need.push("mobil (atau \"Pembelian barang\")"); else if (!noCar) { if (!plate) need.push("plat"); if (!color) need.push("warna"); } }
   if (need.length) { err.textContent = "Wajib diisi: " + need.join(", ") + ". Pelanggan yang tidak mau memberi data: isi \"-\"."; return; }
   try {
     $("cmSave").disabled = true;
@@ -524,7 +540,8 @@ async function saveCustModal() {
       c = up.data;
     }
     let vid = vehicleId === NO_CAR ? null : vehicleId;
-    if (cmMode !== "edit") {
+    if (noCar && cmMode === "new") vid = NO_CAR;
+    else if (cmMode !== "edit") {
       const modelId = Number($("cmModel").value);
       const v = await sb.from("vehicles").insert({ customer_id: c.id, plate, car_model_id: modelId, color }).select().single();
       if (v.error) throw v.error;
@@ -836,8 +853,8 @@ function changeDate() {
 function reprint() { guard(async () => { await doPrint(sale.id); sale = await loadSale(sale.id); renderAll(); }); }
 
 async function refreshStock() {
-  const s = await fetchAll(() => sb.from("product_stock").select("product_id,qty").eq("location_id", ME.location_id).order("product_id")).catch(() => null);
-  if (s) { stock = {}; s.forEach(r => stock[r.product_id] = Number(r.qty)); renderGrid(); }
+  const s = await fetchAll(() => sb.from("product_stock").select("product_id,location_id,qty").order("product_id")).catch(() => null);
+  if (s) { setStock(s); renderGrid(); }
 }
 
 // ═══════════════════════ TRANSACTIONS LIST ═══════════════════════
@@ -847,7 +864,7 @@ async function refreshPending() {
   $("pendingCount").textContent = count || "";
 }
 
-function openTx() { $("txModal").classList.add("open"); loadTx("open"); }
+function openTx() { $("txModal").classList.add("open"); loadTx("today"); }
 
 async function loadTx(which) {
   $("txTabOpen").classList.toggle("on", which === "open");
