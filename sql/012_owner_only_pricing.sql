@@ -1,0 +1,5 @@
+-- v7_owner_only_pricing (applied 2026-11-25)
+-- products, price_tiers, price_lists, categories: insert/update/delete = owner only.
+-- customers.price_list_id / allow_tempo: owner only (trigger guard_customer_pricing).
+-- delete_product: owner only. review_prices(): every tier change + customer price/tempo change.
+-- Full SQL as applied lives in Supabase migration history (name: v7_owner_only_pricing).

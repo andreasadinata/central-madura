@@ -74,12 +74,12 @@
       <input id="pq" placeholder="Cari nama / SKU / barcode…" oninput="renderProducts()">
       <label class="row small" style="margin:0"><input type="checkbox" id="pinactive" style="width:auto" onchange="renderProducts()"> nonaktif</label>
       <span class="grow"></span>
-      <button class="primary" onclick="editProduct(null)">+ Produk baru</button>
+      <button class="primary owner-only" onclick="editProduct(null)">+ Produk baru</button>
     </div>
     <div class="bar">
       <span class="small muted">Tampilkan harga:</span>
       <div class="seg2" id="plists"></div>
-      <button class="small" onclick="newPriceList()">+ Daftar harga</button>
+      <button class="small owner-only" onclick="newPriceList()">+ Daftar harga</button>
       <span id="plistActs"></span>
       <span class="small muted">Daftar harga = set harga khusus untuk pelanggan tertentu (mis. PT tempo). Isi harganya di tiap produk, lalu pasang ke pelanggan di tab Pelanggan.</span>
     </div>
@@ -343,6 +343,7 @@ authGate(start, ["owner", "admin"]);
 async function start() {
   $("who").textContent = ME.full_name + " · " + ME.role + " · " + (ME.locations?.code || "");
   if (ME.role === "owner") $("t-pengguna").classList.remove("hide");
+  if (ME.role !== "owner") document.querySelectorAll(".owner-only").forEach(e => e.classList.add("hide"));
   $("rfrom").value = $("rto").value = todayJkt();
   try { await loadAll(); } catch (e) { toast("Gagal memuat: " + esc(errText(e)), "err"); return; }
   const first = new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Jakarta" }).slice(0, 8) + "01";
@@ -411,7 +412,7 @@ function renderListToggle() {
   const act = lists.filter(x => x.is_active || x.id === showList);
   $("plists").innerHTML = act.map(x => `<button class="${x.id === showList ? "on" : ""}" onclick="showList=${x.id};renderListToggle();renderProducts()">${esc(x.name)}${x.is_active ? "" : " (arsip)"}</button>`).join("");
   const cur = lists.find(x => x.id === showList), arch = lists.filter(x => !x.is_active && x.id !== showList);
-  $("plistActs").innerHTML = (cur && !cur.is_default ? (cur.is_active
+  $("plistActs").innerHTML = ME.role !== "owner" ? "" : (cur && !cur.is_default ? (cur.is_active
       ? `<button class="small" onclick="archiveList(${cur.id}, false)">Arsipkan "${esc(cur.name)}"</button>`
       : `<button class="small" onclick="archiveList(${cur.id}, true)">Aktifkan lagi "${esc(cur.name)}"</button>`) : "")
     + (arch.length ? ` <select class="small" style="width:auto" onchange="if(this.value){showList=Number(this.value);renderListToggle();renderProducts()}"><option value="">Arsip (${arch.length})…</option>${arch.map(x => `<option value="${x.id}">${esc(x.name)}</option>`).join("")}</select>` : "");
@@ -485,7 +486,8 @@ function editProduct(id) {
   editingProduct = id ? products.find(p => p.id === id) : null;
   const p = editingProduct || { category_id: (cats.find(c => "c" + c.id === $("pcat").value) || cats[0]).id, is_service: kind === "jasa", is_active: true,
     service_group: kind === "jasa" && $("pcat").value[0] === "g" ? $("pcat").value.slice(1) : "" };
-  $("pmTitle").textContent = id ? "Ubah produk" : "Produk baru";
+  const own = ME.role === "owner";
+  $("pmTitle").textContent = !own ? "Lihat produk — hanya owner yang bisa mengubah" : id ? "Ubah produk" : "Produk baru";
   $("pmCat").value = p.category_id || cats[0].id; $("pmSku").value = p.sku || "";
   $("pmName").value = p.name || ""; $("pmBrand").value = p.brand || ""; $("pmBarcode").value = p.barcode || "";
   $("pmService").value = p.is_service ? "1" : "0"; $("pmGroup").value = p.service_group || "";
@@ -496,6 +498,7 @@ function editProduct(id) {
   $("pmDelete").classList.toggle("hide", !id);
   $("pmService").disabled = !!id;   // goods ↔ service can't flip once created (stock history)
   pmKindChanged();
+  $("pmSave").classList.toggle("hide", !own); if (!own) $("pmDelete").classList.add("hide");
   draftTiers = {};
   lists.filter(l => l.is_active).forEach(l => draftTiers[l.id] = (tiers[id] || []).filter(t => t.price_list_id === l.id)
     .sort((a, b) => a.min_qty - b.min_qty).map(t => ({ id: t.id, min_qty: Number(t.min_qty), price: Number(t.price) })));
@@ -522,6 +525,7 @@ function renderTiers() {
       <td><label>Harga satuan</label><input value="${num(t.price)}" inputmode="numeric" oninput="this.value=num(parseRp(this.value))" onchange="draftTiers[${l.id}][${i}].price=parseRp(this.value)"></td>
       <td style="width:60px;vertical-align:bottom"><button class="link danger small" onclick="draftTiers[${l.id}].splice(${i},1);renderTiers()">hapus</button></td></tr>`).join("")
       || `<tr><td class="small muted">Belum ada.</td></tr>`}</table>`).join("");
+  if (ME.role !== "owner") $("prodModal").querySelectorAll(".body input, .body select, .body button").forEach(e => e.disabled = true);
 }
 function addTier(lid) {
   const rows = draftTiers[lid];
@@ -1024,6 +1028,7 @@ function editCustomer(i) {
   $("cmList").innerHTML = `<option value="">Umum (standar)</option>` + lists.filter(l => !l.is_default && (l.is_active || l.id === c.price_list_id))
     .map(l => `<option value="${l.id}">${esc(l.name)}${l.is_active ? "" : " (arsip — pakai harga Umum)"}</option>`).join("");
   $("cmList").value = c.price_list_id || ""; $("cmTempo").value = c.allow_tempo ? "1" : "0"; $("cmActive").value = c.is_active ? "1" : "0";
+  $("cmList").disabled = $("cmTempo").disabled = ME.role !== "owner";
   $("cmVeh").innerHTML = c.vehicles.length ? c.vehicles.map(v => `<div class="row" style="padding:4px 0">
       <span class="grow">${esc(v.plate)} · ${esc(v.car_models ? v.car_models.brand + " " + v.car_models.model : "-")}${v.is_active ? "" : " (nonaktif)"}</span>
       <input style="width:120px;padding:5px 8px" placeholder="warna *" value="${esc(v.color || "")}" onchange="setVehColor(${v.id}, this.value)">
@@ -1062,8 +1067,8 @@ async function saveCustomer() {
 // ═══════════ REVIEW ═══════════
 async function loadReview() {
   const args = { p_from: $("rfrom").value, p_to: $("rto").value };
-  const [a, b] = await Promise.all([sb.rpc("review_list", args), sb.rpc("review_extra", args)]);
-  const error = a.error || b.error, data = error ? null : (a.data || []).concat(b.data || []).sort((x, y) => (y.at || "9") > (x.at || "9") ? 1 : -1);
+  const [a, b, c] = await Promise.all([sb.rpc("review_list", args), sb.rpc("review_extra", args), sb.rpc("review_prices", args)]);
+  const error = a.error || b.error || c.error, data = error ? null : (a.data || []).concat(b.data || [], c.data || []).sort((x, y) => (y.at || "9") > (x.at || "9") ? 1 : -1);
   if (error) { $("rtable").innerHTML = `<tr><td colspan="6" class="err">${esc(error.message)}</td></tr>`; return; }
   $("rtable").innerHTML = data.map(r => `<tr><td class="small">${r.at ? new Date(r.at).toLocaleString("id-ID", { timeZone: "Asia/Jakarta" }) : ""}</td>
     <td><b>${esc(r.kind)}</b></td><td>${esc(r.invoice || "")}</td><td>${esc(r.who || "")}</td><td>${esc(r.detail)}</td>
