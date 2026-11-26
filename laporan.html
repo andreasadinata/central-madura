@@ -1,0 +1,378 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Central POS — Laporan</title>
+<link rel="stylesheet" href="style.css">
+<style>
+  #app{min-height:100vh;flex-direction:column}
+  .wrap{padding:16px 20px;display:flex;flex-direction:column;gap:14px;max-width:1500px}
+  .tabs2{display:flex;gap:4px;border-bottom:1px solid var(--border);padding:0 20px;background:var(--surface)}
+  .tabs2 button{border:none;border-bottom:2px solid transparent;border-radius:0;background:none;padding:12px 14px;font-weight:600;color:var(--muted)}
+  .tabs2 button.on{color:var(--accent);border-bottom-color:var(--accent)}
+  .filters{display:flex;flex-wrap:wrap;gap:8px;align-items:center;background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:12px 14px}
+  .filters input[type=date]{width:150px}
+  .ms{position:relative}
+  .ms > button{min-width:130px;text-align:left}
+  .ms > button.has{border-color:var(--accent);color:var(--accent-ink);background:var(--accent-soft)}
+  .ms .menu{position:absolute;top:100%;left:0;z-index:30;background:var(--surface);border:1px solid var(--border);border-radius:8px;
+    box-shadow:0 8px 24px rgba(0,0,0,.12);padding:6px;min-width:220px;max-height:320px;overflow:auto;margin-top:4px}
+  .ms .menu label{display:flex;gap:8px;align-items:center;padding:6px 8px;margin:0;font-size:13px;color:var(--text);cursor:pointer;border-radius:6px}
+  .ms .menu label:hover{background:var(--page)}
+  .ms .menu input{width:auto}
+  .ms .menu .tools{display:flex;gap:8px;padding:4px 8px 8px;border-bottom:1px solid var(--border);margin-bottom:4px}
+  .ms .menu .tools input[type=text]{width:100%;padding:5px 8px}
+  .cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:10px}
+  .kpi{background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:12px 14px}
+  .kpi .l{font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.05em}
+  .kpi .v{font-size:22px;font-weight:700;margin-top:4px}
+  .kpi .s{font-size:12px;color:var(--muted);margin-top:2px}
+  .bar{height:6px;background:var(--accent);border-radius:3px;opacity:.55}
+  th.sort{cursor:pointer;user-select:none}
+  td.neg{color:var(--red);font-weight:600}
+  .note{background:var(--warn-bg);border:1px solid var(--warn-border);color:var(--warn-text);border-radius:8px;padding:10px 12px;font-size:13px}
+</style>
+</head>
+<body>
+
+<div id="login">
+  <div class="login-card">
+    <h1>Central POS — Laporan</h1>
+    <p>Khusus owner / admin</p>
+    <input id="email" type="email" placeholder="Email" autocomplete="username">
+    <input id="pass" type="password" placeholder="Password" autocomplete="current-password">
+    <button class="primary" id="loginBtn">Masuk</button>
+    <div class="err" id="loginErr"></div>
+    <button class="link forgot" id="forgotBtn">Lupa password?</button>
+  </div>
+</div>
+
+<div id="app">
+  <div class="topbar">
+    <div class="logo">CB</div>
+    <div class="brand grow"><b>Laporan</b><span id="who">—</span></div>
+    <a href="admin.html"><button>Admin</button></a>
+    <a href="index.html"><button>Kasir</button></a>
+    <button onclick="logout()">Keluar</button>
+  </div>
+  <div class="tabs2">
+    <button id="t-laba" class="on" onclick="tab('laba')">Penjualan & laba kotor</button>
+    <button id="t-beli" onclick="tab('beli')">Pembelian</button>
+  </div>
+
+  <!-- ═══ PENJUALAN & LABA KOTOR ═══ -->
+  <div class="wrap" id="p-laba">
+    <div class="filters">
+      <input type="date" id="lFrom"> – <input type="date" id="lTo">
+      <button class="small" onclick="setRange('l','today')">Hari ini</button>
+      <button class="small" onclick="setRange('l','month')">Bulan ini</button>
+      <button class="small" onclick="setRange('l','last')">Bulan lalu</button>
+      <button class="small" onclick="setRange('l','quarter')">Kuartal ini</button>
+      <button class="small" onclick="setRange('l','year')">Tahun ini</button>
+      <span style="width:1px;height:24px;background:var(--border)"></span>
+      <div class="ms" id="fBranch"></div>
+      <select id="fKind" style="width:130px" onchange="renderLaba()"><option value="">Barang + jasa</option><option value="b">Barang saja</option><option value="j">Jasa saja</option></select>
+      <div class="ms" id="fCat"></div>
+      <div class="ms" id="fBrand"></div>
+      <div class="ms" id="fGroup"></div>
+      <input id="fText" placeholder="cari barang / SKU / pelanggan" style="width:210px" oninput="renderLaba()">
+    </div>
+    <div class="filters">
+      <b class="small">Kelompokkan per</b>
+      <select id="g1" style="width:150px" onchange="renderLaba()"></select>
+      <span class="small muted">lalu per</span>
+      <select id="g2" style="width:150px" onchange="renderLaba()"></select>
+      <span class="grow"></span>
+      <button class="small" onclick="csvGroups()">CSV ringkasan</button>
+      <button class="small" onclick="csvLines()">CSV semua baris</button>
+    </div>
+    <div class="cards" id="lCards"></div>
+    <div id="lNote"></div>
+    <div class="panel"><table><thead id="lHead"></thead><tbody id="lBody"><tr><td class="muted">Memuat…</td></tr></tbody></table></div>
+    <p class="tiny muted">HPP = harga pokok rata-rata bergerak per barang per cabang, dikunci saat barang terjual (lihat "Kartu HPP" di rincian). Jasa: HPP 0. Invoice void & baris batal tidak dihitung. Tanggal = tanggal invoice.</p>
+  </div>
+
+  <!-- ═══ PEMBELIAN ═══ -->
+  <div class="wrap hide" id="p-beli">
+    <div class="filters">
+      <input type="date" id="bFrom"> – <input type="date" id="bTo">
+      <button class="small" onclick="setRange('b','month')">Bulan ini</button>
+      <button class="small" onclick="setRange('b','last')">Bulan lalu</button>
+      <button class="small" onclick="setRange('b','quarter')">Kuartal ini</button>
+      <span style="width:1px;height:24px;background:var(--border)"></span>
+      <div class="ms" id="bBranch"></div>
+      <div class="ms" id="bSup"></div>
+      <div class="ms" id="bCat"></div>
+      <div class="ms" id="bBrand"></div>
+      <input id="bText" placeholder="cari barang / SKU / no dok" style="width:200px" oninput="renderBeli()">
+    </div>
+    <div class="filters">
+      <b class="small">Kelompokkan per</b>
+      <select id="h1" style="width:150px" onchange="renderBeli()"></select>
+      <span class="small muted">lalu per</span>
+      <select id="h2" style="width:150px" onchange="renderBeli()"></select>
+      <span class="grow"></span>
+      <button class="small" onclick="csvBeli()">CSV</button>
+    </div>
+    <div class="cards" id="bCards"></div>
+    <div class="panel"><table><thead><tr><th>Kelompok</th><th class="num">Qty</th><th class="num">Total beli</th><th class="num">Harga rata²</th><th class="num">Termurah</th><th class="num">Termahal</th><th class="num">Dokumen</th></tr></thead><tbody id="bBody"></tbody></table></div>
+    <p class="tiny muted">Tanggal = tanggal barang diterima. Koreksi pembelian ikut dihitung (qty minus).</p>
+  </div>
+</div>
+
+<!-- lines behind a row -->
+<div class="overlay" id="linesModal"><div class="modal" style="width:1150px">
+  <header><h3 id="lnTitle">Rincian</h3><button onclick="closeModal('linesModal')">Tutup</button></header>
+  <div class="body" style="padding:0;max-height:70vh;overflow:auto"><table><thead id="lnHead"></thead><tbody id="lnBody"></tbody></table></div>
+  <footer><span class="small muted" id="lnSum" style="margin-right:auto"></span><button onclick="closeModal('linesModal')">Tutup</button></footer>
+</div></div>
+
+<!-- HPP card -->
+<div class="overlay" id="cardModal"><div class="modal" style="width:900px">
+  <header><h3 id="cdTitle">Kartu HPP</h3><button onclick="closeModal('cardModal')">Tutup</button></header>
+  <div class="body" style="padding:0;max-height:70vh;overflow:auto">
+    <p class="small" style="padding:12px 16px 0">Setiap barang masuk mengubah harga rata-rata: <b>(stok lama × rata² lama + qty masuk × harga masuk) ÷ stok baru</b>. Barang keluar (terjual) memakai rata² saat itu dan tidak mengubahnya.</p>
+    <table><thead><tr><th>Waktu</th><th>Jenis</th><th>Dokumen</th><th class="num">Qty</th><th class="num">Harga / HPP</th><th class="num">Stok sesudah</th><th class="num">Rata² sesudah</th></tr></thead><tbody id="cdBody"></tbody></table>
+  </div>
+</div></div>
+
+<div id="toast"></div>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="config.js"></script>
+<script src="common.js"></script>
+<script>
+// ── helpers ─────────────────────────────────────────
+const jkt = d => new Date(d.toLocaleString("en-US", { timeZone: "Asia/Jakarta" }));
+const ymd = d => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+const pct = (a, b) => b ? (a / b * 100) : null;
+const fpct = v => v == null ? "—" : v.toFixed(1).replace(".", ",") + "%";
+function closeModal(id) { $(id).classList.remove("open"); }
+document.addEventListener("keydown", e => { if (e.key === "Escape") document.querySelectorAll(".overlay.open").forEach(o => o.classList.remove("open")); });
+document.addEventListener("click", e => { document.querySelectorAll(".ms .menu").forEach(m => { if (!m.parentElement.contains(e.target)) m.remove(); }); });
+
+function setRange(p, kind) {
+  const t = jkt(new Date()); let a = new Date(t), b = new Date(t);
+  if (kind === "month") a = new Date(t.getFullYear(), t.getMonth(), 1);
+  if (kind === "last") { a = new Date(t.getFullYear(), t.getMonth() - 1, 1); b = new Date(t.getFullYear(), t.getMonth(), 0); }
+  if (kind === "quarter") a = new Date(t.getFullYear(), Math.floor(t.getMonth() / 3) * 3, 1);
+  if (kind === "year") a = new Date(t.getFullYear(), 0, 1);
+  $(p + "From").value = ymd(a); $(p + "To").value = ymd(b);
+  p === "l" ? loadLaba() : loadBeli();
+}
+
+// multi-select dropdown: ms(el, label, options[{v,l}], onChange) → el.get() returns selected values ([] = all)
+function ms(el, label, options, onChange) {
+  let sel = new Set(el._sel || []);
+  el._opts = options;
+  const draw = () => {
+    const btn = el.querySelector(":scope > button");
+    btn.textContent = sel.size === 0 ? `${label}: semua` : sel.size === 1 ? `${label}: ${(options.find(o => o.v === [...sel][0]) || {}).l || [...sel][0]}` : `${label}: ${sel.size} dipilih`;
+    btn.classList.toggle("has", sel.size > 0);
+  };
+  el.innerHTML = `<button class="small"></button>`;
+  el.querySelector("button").onclick = e => {
+    e.stopPropagation();
+    const old = el.querySelector(".menu"); if (old) { old.remove(); return; }
+    const m = document.createElement("div"); m.className = "menu";
+    m.innerHTML = `<div class="tools">${options.length > 8 ? `<input type="text" placeholder="cari…">` : ""}<button class="link small" data-a="none">semua</button></div>` +
+      options.map(o => `<label data-l="${esc(o.l.toLowerCase())}"><input type="checkbox" value="${esc(o.v)}" ${sel.has(o.v) ? "checked" : ""}> ${esc(o.l)}</label>`).join("");
+    m.addEventListener("click", ev => ev.stopPropagation());
+    m.querySelector("[data-a=none]").onclick = () => { sel.clear(); m.querySelectorAll("input[type=checkbox]").forEach(c => c.checked = false); el._sel = []; draw(); onChange(); };
+    const s = m.querySelector("input[type=text]");
+    if (s) s.oninput = () => m.querySelectorAll("label").forEach(l => l.style.display = l.dataset.l.includes(s.value.toLowerCase()) ? "" : "none");
+    m.querySelectorAll("input[type=checkbox]").forEach(c => c.onchange = () => { c.checked ? sel.add(c.value) : sel.delete(c.value); el._sel = [...sel]; draw(); onChange(); });
+    el.appendChild(m); if (s) s.focus();
+  };
+  el.get = () => [...sel];
+  draw();
+}
+
+function tab(n) {
+  ["laba", "beli"].forEach(x => { $("p-" + x).classList.toggle("hide", x !== n); $("t-" + x).classList.toggle("on", x === n); });
+  if (n === "beli" && !beliRows) setRange("b", "month");
+}
+function csv(name, rows) {
+  const t = rows.map(r => r.map(v => `"${String(v ?? "").replace(/"/g, '""')}"`).join(",")).join("\n");
+  const a = document.createElement("a"); a.href = URL.createObjectURL(new Blob(["﻿" + t], { type: "text/csv" })); a.download = name; a.click();
+}
+function sortRows(rows, key, dir) { return rows.sort((a, b) => (a[key] > b[key] ? 1 : a[key] < b[key] ? -1 : 0) * dir); }
+
+let locs = [];
+async function start() {
+  if (!["owner", "admin"].includes(ME.role)) { document.body.innerHTML = '<p style="padding:40px">Laporan khusus owner/admin.</p>'; return; }
+  $("who").textContent = ME.full_name + " · " + ME.role;
+  const { data } = await sb.from("locations").select("id,code,name").eq("is_active", true).order("id");
+  locs = data || [];
+  const G = [["product", "Produk"], ["category", "Kategori"], ["brand", "Merk"], ["branch", "Cabang"], ["group", "Grup jasa"], ["kind", "Barang / jasa"],
+             ["day", "Tanggal"], ["month", "Bulan"], ["customer", "Pelanggan"], ["invoice", "Invoice"]];
+  $("g1").innerHTML = G.map(([v, l]) => `<option value="${v}">${l}</option>`).join("");
+  $("g2").innerHTML = `<option value="">—</option>` + G.map(([v, l]) => `<option value="${v}">${l}</option>`).join("");
+  const H = [["product", "Produk"], ["supplier", "Supplier"], ["branch", "Cabang"], ["category", "Kategori"], ["brand", "Merk"], ["month", "Bulan"], ["doc", "Dokumen"]];
+  $("h1").innerHTML = H.map(([v, l]) => `<option value="${v}">${l}</option>`).join("");
+  $("h2").innerHTML = `<option value="">—</option>` + H.map(([v, l]) => `<option value="${v}">${l}</option>`).join("");
+  ["lFrom", "lTo"].forEach(id => $(id).onchange = loadLaba);
+  ["bFrom", "bTo"].forEach(id => $(id).onchange = loadBeli);
+  setRange("l", "month");
+}
+
+// ═══ PENJUALAN & LABA KOTOR ═══
+let lines = [], lSort = { key: "profit", dir: -1 }, groupRows = [];
+const keyOf = {
+  product: r => [r.product_id, r.product], category: r => [r.is_service ? "(jasa)" : r.category || "(tanpa kategori)", r.is_service ? "Jasa" : r.category || "(tanpa kategori)"],
+  brand: r => [r.brand || "(tanpa merk)", r.brand || "(tanpa merk)"], branch: r => [r.branch, r.branch], group: r => [r.service_group || "(barang)", r.service_group || "(barang)"],
+  kind: r => [r.is_service ? "j" : "b", r.is_service ? "Jasa" : "Barang"], day: r => [r.day, r.day], month: r => [r.day.slice(0, 7), r.day.slice(0, 7)],
+  customer: r => [r.customer || "-", r.customer || "-"], invoice: r => [r.invoice, r.invoice],
+};
+async function loadLaba() {
+  if (!$("lFrom").value || !$("lTo").value) return;
+  $("lBody").innerHTML = `<tr><td class="muted">Memuat…</td></tr>`;
+  try { lines = await fetchAll(() => sb.rpc("report_sales_lines", { p_from: $("lFrom").value, p_to: $("lTo").value }).order("day").order("sale_id")); }
+  catch (e) { $("lBody").innerHTML = `<tr><td class="err">${esc(errText(e))}</td></tr>`; return; }
+  lines.forEach(r => { r.qty = Number(r.qty); r.line_total = Number(r.line_total); r.cost_total = r.cost_total == null ? null : Number(r.cost_total); r.hpp = r.hpp == null ? null : Number(r.hpp); });
+  const uniq = f => [...new Set(lines.map(f).filter(Boolean))].sort();
+  ms($("fBranch"), "Cabang", locs.filter(l => ME.role === "owner" || l.id === ME.location_id).map(l => ({ v: l.code, l: l.code })), renderLaba);
+  ms($("fCat"), "Kategori", uniq(r => !r.is_service && r.category).map(v => ({ v, l: v })), renderLaba);
+  ms($("fBrand"), "Merk", uniq(r => r.brand).map(v => ({ v, l: v })), renderLaba);
+  ms($("fGroup"), "Grup jasa", uniq(r => r.service_group).map(v => ({ v, l: v })), renderLaba);
+  renderLaba();
+}
+function filteredLines() {
+  const br = $("fBranch").get(), ca = $("fCat").get(), bd = $("fBrand").get(), gr = $("fGroup").get(), k = $("fKind").value, t = $("fText").value.trim().toLowerCase();
+  return lines.filter(r => (!br.length || br.includes(r.branch)) && (!ca.length || (!r.is_service && ca.includes(r.category))) &&
+    (!bd.length || bd.includes(r.brand)) && (!gr.length || gr.includes(r.service_group)) &&
+    (!k || (k === "j") === r.is_service) &&
+    (!t || (r.product + " " + r.sku + " " + (r.customer || "") + " " + r.invoice).toLowerCase().includes(t)));
+}
+function renderLaba() {
+  const L = filteredLines(), g1 = $("g1").value, g2 = $("g2").value === g1 ? "" : $("g2").value;
+  const sum = rs => { const omzet = rs.reduce((a, r) => a + r.line_total, 0), known = rs.filter(r => r.cost_total != null);
+    const hpp = known.reduce((a, r) => a + r.cost_total, 0), omzetKnown = known.reduce((a, r) => a + r.line_total, 0);
+    return { qty: rs.reduce((a, r) => a + r.qty, 0), omzet, hpp, profit: omzetKnown - hpp, missing: rs.length - known.length,
+             invoices: new Set(rs.map(r => r.sale_id)).size, margin: pct(omzetKnown - hpp, omzetKnown) }; };
+  const T = sum(L);
+  const miss = L.filter(r => r.cost_total == null);
+  $("lCards").innerHTML = [["Omzet", rp(T.omzet), `${num(T.invoices)} invoice`], ["HPP", rp(T.hpp), "harga pokok barang terjual"],
+    ["Laba kotor", rp(T.profit), "omzet − HPP"], ["Margin", fpct(T.margin), "laba kotor ÷ omzet"], ["Qty", num(T.qty), "pcs barang + jasa"]]
+    .map(([l, v, s]) => `<div class="kpi"><div class="l">${l}</div><div class="v">${v}</div><div class="s">${s}</div></div>`).join("");
+  $("lNote").innerHTML = miss.length ? `<div class="note">⚠ ${miss.length} baris (omzet ${rp(miss.reduce((a, r) => a + r.line_total, 0))}) belum punya HPP — barangnya terjual sebelum ada Pembelian di cabang itu. Baris ini tidak dihitung di laba kotor. Contoh: ${esc([...new Set(miss.map(r => r.product))].slice(0, 3).join(", "))}.</div>` : "";
+  const map = new Map();
+  L.forEach(r => { const a = keyOf[g1](r), b = g2 ? keyOf[g2](r) : ["", ""], k = a[0] + "¦" + b[0];
+    if (!map.has(k)) map.set(k, { k1: a[0], l1: a[1], l2: b[1], rows: [] }); map.get(k).rows.push(r); });
+  groupRows = [...map.values()].map(g => Object.assign(g, sum(g.rows), { share: pct(sum(g.rows).profit, T.profit) }));
+  sortRows(groupRows, lSort.key, lSort.dir);
+  const maxP = Math.max(1, ...groupRows.map(g => Math.abs(g.profit)));
+  const cols = [["l1", $("g1").selectedOptions[0].text]];
+  if (g2) cols.push(["l2", $("g2").selectedOptions[0].text]);
+  cols.push(["qty", "Qty"], ["omzet", "Omzet"], ["hpp", "HPP"], ["profit", "Laba kotor"], ["margin", "Margin"], ["share", "% dari laba"]);
+  $("lHead").innerHTML = "<tr>" + cols.map(([k, l]) => `<th class="sort ${["l1", "l2"].includes(k) ? "" : "num"}" onclick="lSortBy('${k}')">${esc(l)}${lSort.key === k ? (lSort.dir > 0 ? " ↑" : " ↓") : ""}</th>`).join("") + "</tr>";
+  $("lBody").innerHTML = groupRows.slice(0, 1000).map((g, i) => `<tr class="click" onclick="showLines(${i})">
+    <td><b>${esc(g.l1)}</b></td>${g2 ? `<td>${esc(g.l2)}</td>` : ""}
+    <td class="num">${num(g.qty)}</td><td class="num">${num(g.omzet)}</td><td class="num">${num(Math.round(g.hpp))}${g.missing ? ` <span class="tiny" style="color:var(--warn-text)">⚠${g.missing}</span>` : ""}</td>
+    <td class="num ${g.profit < 0 ? "neg" : ""}"><b>${num(Math.round(g.profit))}</b><div class="bar" style="width:${Math.abs(g.profit) / maxP * 100}%;margin-left:auto;${g.profit < 0 ? "background:var(--red)" : ""}"></div></td>
+    <td class="num ${g.margin < 0 ? "neg" : ""}">${fpct(g.margin)}</td><td class="num">${fpct(g.share)}</td></tr>`).join("")
+    || `<tr><td colspan="${cols.length}" class="muted">Tidak ada penjualan dengan filter ini.</td></tr>`;
+}
+function lSortBy(k) { lSort = { key: k, dir: lSort.key === k ? -lSort.dir : (["l1", "l2"].includes(k) ? 1 : -1) }; renderLaba(); }
+function showLines(i) {
+  const g = groupRows[i], rows = [...g.rows].sort((a, b) => a.day < b.day ? -1 : a.day > b.day ? 1 : a.sale_id - b.sale_id);
+  $("lnTitle").textContent = `Rincian — ${g.l1}${g.l2 ? " · " + g.l2 : ""}`;
+  $("lnHead").innerHTML = `<tr><th>Tanggal</th><th>Invoice</th><th>Cabang</th><th>Pelanggan</th><th>Barang / jasa</th><th class="num">Qty</th><th class="num">Harga jual</th><th class="num">HPP / pcs</th><th class="num">Omzet</th><th class="num">HPP</th><th class="num">Laba</th><th></th></tr>`;
+  $("lnBody").innerHTML = rows.map(r => `<tr><td class="small">${r.day}</td><td><a href="index.html?sale=${r.sale_id}" target="_blank">${esc(r.invoice)}</a></td><td>${esc(r.branch)}</td>
+    <td class="small">${esc(r.customer || "")}</td><td>${esc(r.product)}${r.unit_price < r.standard_price ? `<div class="tiny" style="color:var(--warn-text)">harga normal ${num(r.standard_price)}</div>` : ""}</td>
+    <td class="num">${num(r.qty)}</td><td class="num">${num(r.unit_price)}</td>
+    <td class="num">${r.is_service ? '<span class="muted">jasa</span>' : r.hpp == null ? '<span style="color:var(--warn-text)">belum ada</span>' : num(Math.round(r.hpp))}</td>
+    <td class="num">${num(r.line_total)}</td><td class="num">${r.cost_total == null ? "—" : num(Math.round(r.cost_total))}</td>
+    <td class="num ${r.cost_total != null && r.line_total - r.cost_total < 0 ? "neg" : ""}">${r.cost_total == null ? "—" : num(Math.round(r.line_total - r.cost_total))}</td>
+    <td>${r.is_service ? "" : `<button class="link small" onclick="costCard(${r.product_id},${r.location_id},'${esc(r.product).replace(/'/g, "")}','${esc(r.branch)}')">kartu HPP</button>`}</td></tr>`).join("");
+  $("lnSum").textContent = `${rows.length} baris · omzet ${rp(g.omzet)} · HPP ${rp(Math.round(g.hpp))} · laba kotor ${rp(Math.round(g.profit))}`;
+  $("linesModal").classList.add("open");
+}
+async function costCard(pid, loc, name, branch) {
+  $("cdTitle").textContent = `Kartu HPP — ${name} · ${branch}`;
+  $("cdBody").innerHTML = `<tr><td colspan="7" class="muted">Memuat…</td></tr>`; $("cardModal").classList.add("open");
+  const { data, error } = await sb.rpc("report_cost_card", { p_product: pid, p_location: loc });
+  if (error) { $("cdBody").innerHTML = `<tr><td colspan="7" class="err">${esc(error.message)}</td></tr>`; return; }
+  const K = { purchase: "Pembelian", sale: "Terjual", sale_cancel: "Batal/void (kembali)", adjust: "Stok opname", opening: "Stok awal" };
+  $("cdBody").innerHTML = data.map(m => `<tr style="${Number(m.qty) > 0 ? "background:var(--green-soft)" : ""}">
+    <td class="small">${new Date(m.at).toLocaleString("id-ID", { timeZone: "Asia/Jakarta" })}</td><td>${K[m.kind] || m.kind}</td><td class="small">${esc(m.ref || "")}</td>
+    <td class="num">${Number(m.qty) > 0 ? "+" : ""}${num(m.qty)}</td><td class="num">${m.unit_cost == null ? "—" : num(Math.round(m.unit_cost))}</td>
+    <td class="num">${num(m.qty_after)}</td><td class="num"><b>${m.avg_after == null ? "—" : num(Math.round(m.avg_after))}</b></td></tr>`).join("")
+    || `<tr><td colspan="7" class="muted">Belum ada pergerakan stok.</td></tr>`;
+}
+function csvGroups() {
+  const g2 = $("g2").value && $("g2").value !== $("g1").value;
+  csv(`laba-kotor_${$("lFrom").value}_${$("lTo").value}.csv`, [[$("g1").selectedOptions[0].text, ...(g2 ? [$("g2").selectedOptions[0].text] : []), "Qty", "Omzet", "HPP", "Laba kotor", "Margin %", "Baris tanpa HPP"],
+    ...groupRows.map(g => [g.l1, ...(g2 ? [g.l2] : []), g.qty, g.omzet, Math.round(g.hpp), Math.round(g.profit), g.margin == null ? "" : g.margin.toFixed(1), g.missing])]);
+}
+function csvLines() {
+  csv(`penjualan-baris_${$("lFrom").value}_${$("lTo").value}.csv`, [["Tanggal", "Cabang", "Invoice", "Pelanggan", "SKU", "Barang/jasa", "Merk", "Kategori", "Grup jasa", "Qty", "Harga jual", "Harga normal", "HPP/pcs", "Omzet", "HPP", "Laba kotor"],
+    ...filteredLines().map(r => [r.day, r.branch, r.invoice, r.customer, r.sku, r.product, r.brand, r.category, r.service_group, r.qty, r.unit_price, r.standard_price,
+      r.hpp == null ? "" : Math.round(r.hpp), r.line_total, r.cost_total == null ? "" : Math.round(r.cost_total), r.cost_total == null ? "" : Math.round(r.line_total - r.cost_total)])]);
+}
+
+// ═══ PEMBELIAN ═══
+let beliRows = null, beliGroups = [], prodMap = {}, catMap = {}, supMap = {};
+async function loadBeli() {
+  if (!$("bFrom").value || !$("bTo").value) return;
+  $("bBody").innerHTML = `<tr><td colspan="7" class="muted">Memuat…</td></tr>`;
+  try {
+    const [items, pr, ca, su] = await Promise.all([
+      fetchAll(() => sb.from("purchase_items").select("id,qty,unit_cost,line_total,product_id,purchases!inner(id,doc_no,received_date,location_id,supplier_id,corrects_id)")
+        .gte("purchases.received_date", $("bFrom").value).lte("purchases.received_date", $("bTo").value).order("id")),
+      fetchAll(() => sb.from("products").select("id,sku,name,brand,category_id").order("id")),
+      sb.from("categories").select("id,name"), sb.from("suppliers").select("id,name")]);
+    pr.forEach(p => prodMap[p.id] = p); (ca.data || []).forEach(c => catMap[c.id] = c.name); (su.data || []).forEach(s => supMap[s.id] = s.name);
+    beliRows = items.filter(i => ME.role === "owner" || i.purchases.location_id === ME.location_id).map(i => {
+      const p = prodMap[i.product_id] || {}, pu = i.purchases;
+      return { qty: Number(i.qty), cost: Number(i.unit_cost), total: Number(i.line_total), product: p.name || "?", sku: p.sku || "", brand: p.brand || "(tanpa merk)",
+        category: catMap[p.category_id] || "(tanpa kategori)", supplier: supMap[pu.supplier_id] || "?", branch: (locs.find(l => l.id === pu.location_id) || {}).code || "?",
+        doc: pu.doc_no, day: pu.received_date, month: pu.received_date.slice(0, 7), product_id: i.product_id, correction: !!pu.corrects_id };
+    });
+  } catch (e) { $("bBody").innerHTML = `<tr><td colspan="7" class="err">${esc(errText(e))}</td></tr>`; return; }
+  const uniq = f => [...new Set(beliRows.map(f))].sort();
+  ms($("bBranch"), "Cabang", locs.filter(l => ME.role === "owner" || l.id === ME.location_id).map(l => ({ v: l.code, l: l.code })), renderBeli);
+  ms($("bSup"), "Supplier", uniq(r => r.supplier).map(v => ({ v, l: v })), renderBeli);
+  ms($("bCat"), "Kategori", uniq(r => r.category).map(v => ({ v, l: v })), renderBeli);
+  ms($("bBrand"), "Merk", uniq(r => r.brand).map(v => ({ v, l: v })), renderBeli);
+  renderBeli();
+}
+function renderBeli() {
+  if (!beliRows) return;
+  const br = $("bBranch").get(), su = $("bSup").get(), ca = $("bCat").get(), bd = $("bBrand").get(), t = $("bText").value.trim().toLowerCase();
+  const R = beliRows.filter(r => (!br.length || br.includes(r.branch)) && (!su.length || su.includes(r.supplier)) && (!ca.length || ca.includes(r.category)) &&
+    (!bd.length || bd.includes(r.brand)) && (!t || (r.product + " " + r.sku + " " + r.doc).toLowerCase().includes(t)));
+  const h1 = $("h1").value, h2 = $("h2").value === h1 ? "" : $("h2").value;
+  const lab = (r, k) => k === "product" ? r.product : r[k];
+  const map = new Map();
+  R.forEach(r => { const k = lab(r, h1) + "¦" + (h2 ? lab(r, h2) : ""); if (!map.has(k)) map.set(k, { l1: lab(r, h1), l2: h2 ? lab(r, h2) : "", rows: [] }); map.get(k).rows.push(r); });
+  beliGroups = [...map.values()].map(g => { const pos = g.rows.filter(r => r.qty > 0), q = g.rows.reduce((a, r) => a + r.qty, 0), tot = g.rows.reduce((a, r) => a + r.total, 0);
+    return Object.assign(g, { qty: q, total: tot, avg: q ? tot / q : null, min: pos.length ? Math.min(...pos.map(r => r.cost)) : null, max: pos.length ? Math.max(...pos.map(r => r.cost)) : null, docs: new Set(g.rows.map(r => r.doc)).size }); })
+    .sort((a, b) => b.total - a.total);
+  const tot = R.reduce((a, r) => a + r.total, 0);
+  $("bCards").innerHTML = [["Total pembelian", rp(tot), `${new Set(R.map(r => r.doc)).size} dokumen`], ["Qty", num(R.reduce((a, r) => a + r.qty, 0)), "pcs"],
+    ["Koreksi", num(R.filter(r => r.correction).length), "baris dari koreksi pembelian"]]
+    .map(([l, v, s]) => `<div class="kpi"><div class="l">${l}</div><div class="v">${v}</div><div class="s">${s}</div></div>`).join("");
+  $("bBody").innerHTML = beliGroups.slice(0, 1000).map((g, i) => `<tr class="click" onclick="showBeli(${i})"><td><b>${esc(g.l1)}</b>${g.l2 ? `<div class="small muted">${esc(g.l2)}</div>` : ""}</td>
+    <td class="num">${num(g.qty)}</td><td class="num">${num(g.total)}</td><td class="num">${g.avg == null ? "—" : num(Math.round(g.avg))}</td>
+    <td class="num">${g.min == null ? "—" : num(g.min)}</td><td class="num ${g.max != null && g.min != null && g.max > g.min * 1.15 ? "neg" : ""}">${g.max == null ? "—" : num(g.max)}</td><td class="num">${g.docs}</td></tr>`).join("")
+    || `<tr><td colspan="7" class="muted">Tidak ada pembelian dengan filter ini.</td></tr>`;
+}
+function showBeli(i) {
+  const g = beliGroups[i];
+  $("lnTitle").textContent = `Pembelian — ${g.l1}${g.l2 ? " · " + g.l2 : ""}`;
+  $("lnHead").innerHTML = `<tr><th>Diterima</th><th>Dokumen</th><th>Cabang</th><th>Supplier</th><th>Barang</th><th class="num">Qty</th><th class="num">Harga beli</th><th class="num">Total</th></tr>`;
+  $("lnBody").innerHTML = [...g.rows].sort((a, b) => a.day < b.day ? -1 : 1).map(r => `<tr><td class="small">${r.day}</td><td>${esc(r.doc)}${r.correction ? ' <span class="badge b-void">koreksi</span>' : ""}</td>
+    <td>${esc(r.branch)}</td><td>${esc(r.supplier)}</td><td>${esc(r.product)}</td><td class="num">${num(r.qty)}</td><td class="num">${num(r.cost)}</td><td class="num">${num(r.total)}</td></tr>`).join("");
+  $("lnSum").textContent = `${g.rows.length} baris · total ${rp(g.total)}`;
+  $("linesModal").classList.add("open");
+}
+function csvBeli() {
+  const h2 = $("h2").value && $("h2").value !== $("h1").value;
+  csv(`pembelian_${$("bFrom").value}_${$("bTo").value}.csv`, [[$("h1").selectedOptions[0].text, ...(h2 ? [$("h2").selectedOptions[0].text] : []), "Qty", "Total beli", "Harga rata2", "Termurah", "Termahal", "Dokumen"],
+    ...beliGroups.map(g => [g.l1, ...(h2 ? [g.l2] : []), g.qty, g.total, g.avg == null ? "" : Math.round(g.avg), g.min ?? "", g.max ?? "", g.docs])]);
+}
+authGate(start);
+</script>
+</body>
+</html>

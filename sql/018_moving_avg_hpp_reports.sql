@@ -1,0 +1,8 @@
+-- v13_moving_avg_hpp_reports (applied 2026-11-26)
+-- 1. _add_items: every below-list price typed by a non-owner is 'pending' (toko auto-approval removed; customers.is_toko unused).
+-- 2. stock_costs(product, branch, qty, avg_cost) kept by trigger stock_cost (BEFORE INSERT on stock_moves) via _apply_cost():
+--    goods in (purchase/opening/adjust up/sale_cancel) re-average: (qty*avg + in_qty*in_cost)/(qty+in_qty);
+--    sale moves get unit_cost = average at that moment (frozen HPP); sale_cancel returns at the original HPP.
+--    Existing moves were replayed once to backfill. avg_cost() now reads stock_costs.
+-- 3. report_sales_lines(from, to): every sold line with frozen HPP (owner all branches, admin own branch).
+-- 4. report_cost_card(product, branch): move-by-move build-up of the average ("Kartu HPP").

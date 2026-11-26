@@ -49,12 +49,13 @@
     <div class="brand grow"><b>Admin</b><span id="who">—</span></div>
     <span id="branchSw"></span>
     <a href="queue.html"><button>Antrian</button></a>
+    <a href="laporan.html"><button>Laporan</button></a>
     <a href="index.html"><button>Ke kasir</button></a>
     <button onclick="logout()">Keluar</button>
   </div>
   <div class="tabs">
     <button id="t-penjualan" onclick="tab('penjualan')">Penjualan</button>
-    <button id="t-produk" onclick="tab('produk')">Produk & harga</button>
+    <button id="t-produk" onclick="tab('produk')">Produk</button>
     <button id="t-pembelian" onclick="tab('pembelian')">Pembelian</button>
     <button id="t-tinjauan" onclick="tab('tinjauan')">Tinjauan harian</button>
     <button id="t-mekanik" onclick="tab('mekanik')">Mekanik</button>
@@ -186,7 +187,7 @@
   <div class="page hide" id="p-pelanggan">
     <div class="bar"><input id="cq" placeholder="Cari nama / HP / plat…"><button onclick="searchCustomers()">Cari</button></div>
     <div class="panel"><table>
-      <thead><tr><th>Nama</th><th>HP</th><th>Kendaraan</th><th>Daftar harga</th><th>Tempo</th><th>Toko</th></tr></thead>
+      <thead><tr><th>Nama</th><th>HP</th><th>Kendaraan</th><th>Daftar harga</th><th>Tempo</th></tr></thead>
       <tbody id="ctable"><tr><td colspan="5" class="muted">Cari pelanggan untuk mengatur daftar harga & izin tempo.</td></tr></tbody></table></div>
   </div>
 
@@ -275,7 +276,7 @@
       </div>
       <div class="grid2">
         <div class="field"><label>Status</label><select id="cmActive"><option value="1">Aktif</option><option value="0">Nonaktif</option></select></div>
-        <div class="field"><label>Toko (grosir)? <span class="tiny muted">admin boleh turunkan harga sampai harga beli</span></label><select id="cmToko"><option value="0">Tidak</option><option value="1">Ya — toko/bengkel lain</option></select></div>
+        <div class="field hide"><select id="cmToko"><option value="0">Tidak</option><option value="1">Ya</option></select></div>
       </div>
       <div class="listhead">Kendaraan</div>
       <div id="cmVeh" class="small"></div>
@@ -508,7 +509,7 @@ function renderProducts() {
   const price1 = pid => { const r = (tiers[pid] || []).filter(t => t.price_list_id === showList && Number(t.min_qty) === 1)[0]; return r ? Number(r.price) : null; };
   const val = (p, k) => ({ name: p.name, sku: p.sku, price: price1(p.id) ?? -1, stock: stock[p.id] || 0,
     total: Number(stats[p.id]?.sold_total || 0), avg3: Number(stats[p.id]?.avg_3_months || 0),
-    last: Number(stats[p.id]?.sold_last_month || 0), cost: costOf(p.id) ?? -1, group: p.service_group || "" })[k];
+    last: Number(stats[p.id]?.sold_last_month || 0), cost: costOf(p.id) ?? -1, group: p.service_group || "", brand: (p.brand || "").toLowerCase() })[k];
   const mism = p => { const g = !p.is_service && grosirTier(p.id), c = costOf(p.id); return g && c != null && g.price !== c ? { g, c } : null; };
   const nm = products.filter(p => p.is_active && mism(p)).length;
   $("pmismN").textContent = nm ? `(${nm})` : "(0)";
@@ -522,7 +523,7 @@ function renderProducts() {
   const lname = (lists.find(l => l.id === showList) || {}).name;
   const cols = isJ
     ? [["sku","SKU"],["name","Jasa"],["group","Grup"],["price","Harga " + lname],["total","Total terjual"],["avg3","Rata² 3 bln"],["last","Bulan lalu"]]
-    : [["sku","SKU"],["name","Barang"],["price","Harga " + lname],["stock","Stok"],["total","Total terjual"],["avg3","Rata² 3 bln"],["last","Bulan lalu"]];
+    : [["sku","SKU"],["name","Barang"],["brand","Merk"],["price","Harga " + lname],["stock","Stok"],["total","Total terjual"],["avg3","Rata² 3 bln"],["last","Bulan lalu"]];
   const numCols = ["price","stock","total","avg3","last"];
   $("phead").innerHTML = "<tr>" + cols.map(([k, l]) => `<th class="sort ${sortKey === k ? "on" : ""} ${numCols.includes(k) ? "num" : ""}" onclick="sortBy('${k}')">${esc(l)}${sortKey === k ? (sortDir > 0 ? " ↑" : " ↓") : ""}</th>`).join("") + "</tr>";
   $("ptable").innerHTML = list.map(p => {
@@ -532,7 +533,8 @@ function renderProducts() {
     const st = stats[p.id], qty = n => n ? num(n) + " pcs" : "—";
     const cells = isJ
       ? [esc(p.sku), `<b>${esc(p.name)}</b>${p.is_active ? "" : " (nonaktif)"}`, esc(p.service_group || ""), pr, qty(st?.sold_total), qty(st?.avg_3_months), qty(st?.sold_last_month)]
-      : [esc(p.sku), `<b>${esc(p.name)}</b>${p.is_active ? "" : " (nonaktif)"}<div class="tiny muted">${esc(catName(p.category_id))}${p.brand ? " · " + esc(p.brand) : ""}${p.isi_per_dus ? " · isi " + p.isi_per_dus + "/dus" : ""}</div>`,
+      : [esc(p.sku), `<b>${esc(p.name)}</b>${p.is_active ? "" : " (nonaktif)"}<div class="tiny muted">${esc(catName(p.category_id))}${p.isi_per_dus ? " · isi " + p.isi_per_dus + "/dus" : ""}</div>`,
+         esc(p.brand || ""),
          pr + ((m => m ? `<div class="tiny" style="color:var(--red);font-weight:600">⚠ ${m.g.min_qty}+ = ${num(m.g.price)}, harga beli ${num(m.c)}</div>` : "")(mism(p))),
          `<span style="${(stock[p.id] || 0) < 0 ? "color:var(--red);font-weight:600" : ""}">${num(stock[p.id] || 0)} pcs</span>`, qty(st?.sold_total), qty(st?.avg_3_months), qty(st?.sold_last_month)];
     return `<tr class="click ${p.is_active ? "" : "off"}" onclick="editProduct(${p.id})">` +
@@ -707,7 +709,7 @@ async function xlsDownload() {
     ["2. Jangan ubah kolom SKU. Nama & Merk hanya info (tidak dipakai saat upload)."],
     ["3. Harga beli kosong = tidak diubah. Semua kolom harga kosong = harga tidak diubah."],
     ["4. Hapus baris yang tidak perlu diubah boleh saja."],
-    ["5. Simpan sebagai .xlsx, lalu Admin → Produk & harga → Upload Excel. Semua perubahan dicek dulu sebelum diterapkan."],
+    ["5. Simpan sebagai .xlsx, lalu Admin → Produk → Upload Excel. Semua perubahan dicek dulu sebelum diterapkan."],
     ["Hanya daftar harga Umum. Daftar harga lain diatur per produk."]]);
   const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, ws, "Harga"); XLSX.utils.book_append_sheet(wb, help, "Cara pakai");
   XLSX.writeFile(wb, `harga_${kind}_${todayJkt()}.xlsx`);
@@ -932,7 +934,7 @@ function puSuggest(i) {
     words.every(w => (p.name + " " + p.sku + " " + (p.barcode || "") + " " + (p.brand || "")).toLowerCase().includes(w))).slice(0, 50);
   puSel = 0;
   box.innerHTML = puSugg.length ? puSugg.map((p, k) => `<div class="${k === 0 ? "sel" : ""}" onmousedown="puPick(${i},${p.id})">${esc(p.name)} <span class="muted small">${esc(p.sku)} · stok ${num(stock[p.id] || 0)}</span></div>`).join("")
-    : `<div class="muted">Tidak ada barang "${esc(term)}". Tambah dulu di Produk & harga.</div>`;
+    : `<div class="muted">Tidak ada barang "${esc(term)}". Tambah dulu di Produk.</div>`;
   box.classList.remove("hide"); puCalc();
 }
 function puPick(i, pid) {
@@ -1336,7 +1338,7 @@ async function searchCustomers(latest) {
     <td><b>${esc(c.name)}</b>${c.is_active ? "" : " (nonaktif)"}</td><td>${esc(c.phone || "")}${c.phone && c.address ? "" : ' <span class="small" style="color:var(--red)">data kurang</span>'}</td>
     <td>${c.vehicles.map(v => esc(v.plate) + (v.color ? "" : ' <span style="color:var(--red)">(warna?)</span>')).join(", ")}</td>
     <td>${esc((lists.find(l => l.id === c.price_list_id) || { name: "Umum" }).name)}</td>
-    <td>${c.allow_tempo ? '<span class="badge b-tempo">Ya</span>' : ""}</td><td>${c.is_toko ? '<span class="badge b-tempo">Toko</span>' : ""}</td></tr>`).join("")
+    <td>${c.allow_tempo ? '<span class="badge b-tempo">Ya</span>' : ""}</td></tr>`).join("")
     || `<tr><td colspan="5" class="muted">Tidak ditemukan.</td></tr>`);
 }
 
