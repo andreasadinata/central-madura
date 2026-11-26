@@ -1389,8 +1389,8 @@ async function saveCustomer() {
 // ═══════════ REVIEW ═══════════
 async function loadReview() {
   const args = { p_from: $("rfrom").value, p_to: $("rto").value };
-  const [a, b, c, d, e, f] = await Promise.all([sb.rpc("review_list", args), sb.rpc("review_extra", args), sb.rpc("review_prices", args), sb.rpc("review_cost_check", args), sb.rpc("review_more", args), sb.rpc("review_discounts", args)]);
-  const error = a.error || b.error || c.error || d.error || e.error || f.error, data = error ? null : (a.data || []).concat(b.data || [], c.data || [], d.data || [], e.data || [], f.data || []).sort((x, y) => (y.at || "9") > (x.at || "9") ? 1 : -1);
+  const [a, b, c, d, e, f, __g] = await Promise.all([sb.rpc("review_list", args), sb.rpc("review_extra", args), sb.rpc("review_prices", args), sb.rpc("review_cost_check", args), sb.rpc("review_more", args), sb.rpc("review_discounts", args), sb.rpc("review_money", args)]);
+  const error = a.error || b.error || c.error || d.error || e.error || f.error || __g.error, data = error ? null : (a.data || []).concat(b.data || [], c.data || [], d.data || [], e.data || [], f.data || [], __g.data || []).sort((x, y) => (y.at || "9") > (x.at || "9") ? 1 : -1);
   if (error) { $("rtable").innerHTML = `<tr><td colspan="6" class="err">${esc(error.message)}</td></tr>`; return; }
   $("rtable").innerHTML = data.map(r => `<tr><td class="small">${r.at ? new Date(r.at).toLocaleString("id-ID", { timeZone: "Asia/Jakarta" }) : ""}</td>
     <td><b>${esc(r.kind)}</b></td><td>${esc(r.invoice || "")}</td><td>${esc(r.who || "")}</td><td>${esc(r.detail)}</td>

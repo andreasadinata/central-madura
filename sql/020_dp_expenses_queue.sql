@@ -1,0 +1,9 @@
+-- v15_service_role_grants_for_user_admin: service_role may read/insert profiles + audit_log (admin-users edge function).
+-- v16_dp_expenses_queue_autodone + v16b (applied 2026-11-26)
+-- DP: customer_deposits (doc DP-<branch>-YYMM-nnnn), create_deposit, refund_deposit; payments.method 'dp' + deposit_id;
+--     pay_sale_multi accepts {method:'dp', deposit_id}; void_sale reopens DPs used on the invoice.
+-- Queue: trigger sale_paid_finishes_car marks a linked car Selesai when its invoice becomes lunas while still Dikerjakan.
+--        q_for_cashier = today's cars only.
+-- Pengeluaran: expense_categories (from the BEBAN sheet), expenses (kinds beban/setor_cm/hutang_cm/prive/koperasi_keluar/koperasi_masuk),
+--        add_expense (non-owner: today only), cancel_expense (reason, no delete).
+-- Tinjauan: review_money (DP dikembalikan, pengeluaran dibatalkan, mobil selesai otomatis saat lunas).

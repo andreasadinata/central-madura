@@ -119,6 +119,8 @@
     <div class="brand grow"><b id="locName">—</b><span>Kasir: <span id="whoName">—</span></span></div>
     <span class="chip" id="invChip">INVOICE BARU</span>
     <button onclick="openTx()">Transaksi <span class="small muted">· belum lunas</span> <b id="pendingCount" style="color:var(--red)"></b></button>
+    <button onclick="openDpList()">DP</button>
+    <button onclick="openExp()">Pengeluaran</button>
     <span id="branchSw"></span>
     <a href="queue.html"><button>Antrian</button></a>
     <a id="adminLink" class="hide" href="admin.html"><button>Admin</button></a>
@@ -164,6 +166,7 @@
         </div>
       </div>
 
+      <div id="mechLine" class="small hide" style="margin:8px 20px 0;padding:8px 10px;background:var(--page);border-radius:8px"></div>
       <div class="sec"><span id="secTitle">Keranjang</span><span id="itemCount">0 item</span></div>
       <div class="lines" id="lines"></div>
 
@@ -188,6 +191,52 @@
     </div>
   </div>
 </div>
+
+<!-- DP: new deposit for the selected customer -->
+<div class="overlay" id="dpModal"><div class="modal" style="width:460px">
+  <header><h3>Uang muka (DP)</h3><button onclick="closeModal('dpModal')">Tutup</button></header>
+  <div class="body">
+    <p class="small" id="dpCust" style="margin-bottom:10px"></p>
+    <div class="grid2">
+      <div class="field"><label>Jumlah DP *</label><input id="dpAmt" class="num" inputmode="numeric" oninput="this.value=this.value?num(parseRp(this.value)):''"></div>
+      <div class="field"><label>Dibayar lewat *</label><select id="dpMethod"></select></div>
+    </div>
+    <div class="field"><label>DP untuk apa *</label><input id="dpNote" placeholder="mis. Ban GT 185/65 R15 ×4, pesan Surabaya"></div>
+    <p class="tiny muted">DP bukan penjualan. Saat pelanggan datang lagi, buat invoice seperti biasa lalu centang DP ini di bagian pembayaran.</p>
+    <div class="err" id="dpErr"></div>
+  </div>
+  <footer><button onclick="closeModal('dpModal')">Batal</button><button class="go" id="dpSave" onclick="saveDp()">Simpan & cetak kwitansi</button></footer>
+</div></div>
+
+<!-- DP list of this branch -->
+<div class="overlay" id="dpListModal"><div class="modal" style="width:820px">
+  <header><h3>DP yang belum dipakai</h3><button onclick="closeModal('dpListModal')">Tutup</button></header>
+  <div class="body" style="padding:0"><table><thead><tr><th>No</th><th>Tanggal</th><th>Pelanggan</th><th>Untuk</th><th class="num">Jumlah</th><th></th></tr></thead><tbody id="dpListBody"></tbody></table></div>
+  <footer><span class="small muted" style="margin-right:auto">DP baru: pilih pelanggan dulu, lalu klik "+ DP" di kotak pelanggan.</span><button onclick="closeModal('dpListModal')">Tutup</button></footer>
+</div></div>
+
+<!-- PENGELUARAN -->
+<div class="overlay" id="expModal"><div class="modal" style="width:860px">
+  <header><h3>Pengeluaran hari ini</h3><button onclick="closeModal('expModal')">Tutup</button></header>
+  <div class="body">
+    <div class="grid2" style="grid-template-columns:1.2fr 1fr 1fr">
+      <div class="field"><label>Jenis</label><select id="exKind" onchange="expKindChanged()">
+        <option value="beban">Beban / biaya operasional</option><option value="koperasi_keluar">Koperasi: pinjaman ke karyawan</option>
+        <option value="koperasi_masuk">Koperasi: cicilan dari karyawan (uang masuk)</option><option value="setor_cm">Setor laba ke Central Motor</option>
+        <option value="hutang_cm">Bayar hutang ke Central Motor</option><option value="prive">Diambil pemilik (prive)</option></select></div>
+      <div class="field" id="exCatBox"><label>Kategori</label><select id="exCat"></select></div>
+      <div class="field hide" id="exPersonBox"><label>Nama karyawan</label><input id="exPerson" style="text-transform:uppercase"></div>
+      <div class="field"><label>Jumlah</label><input id="exAmt" class="num" inputmode="numeric" oninput="this.value=this.value?num(parseRp(this.value)):''"></div>
+    </div>
+    <div class="grid2" style="grid-template-columns:2fr 1fr auto;align-items:end">
+      <div class="field"><label>Keterangan</label><input id="exDesc" placeholder="mis. Air galon 2, token listrik timur…"></div>
+      <div class="field"><label id="exFromLbl">Dibayar dari</label><select id="exFrom"></select></div>
+      <div class="field"><button class="primary" id="exSave" onclick="saveExp()">Simpan</button></div>
+    </div>
+    <div class="err" id="exErr"></div>
+    <table style="margin-top:8px"><thead><tr><th>No</th><th>Jenis / kategori</th><th>Keterangan</th><th>Dari</th><th class="num">Jumlah</th><th>Oleh</th><th></th></tr></thead><tbody id="exBody"></tbody></table>
+  </div>
+</div></div>
 
 <!-- NEW CUSTOMER / VEHICLE -->
 <div class="overlay" id="custModal">
@@ -233,7 +282,8 @@ let sale = null;            // loaded saved invoice (null = new invoice)
 let cart = [];              // lines not yet saved: {pid, qty, price, reason, manual}
 let editing = -1;           // index of cart line being edited
 let method = "bayar", printFmt = "invoice";
-let discount = 0, discountNote = "";   // invoice discount (Rp) for a new invoice: no approval, listed in Tinjauan   // method: "bayar" (pay now) | "tempo"
+let discount = 0, discountNote = "";
+let deps = [], useDep = new Set();   // open DPs of the selected customer; ids ticked for this payment   // invoice discount (Rp) for a new invoice: no approval, listed in Tinjauan   // method: "bayar" (pay now) | "tempo"
 let banks = [];
 let busy = false;
 
@@ -393,6 +443,8 @@ async function setCustomer(c, pickVehicleId) {
     if (pickVehicleId) vehicleId = pickVehicleId;
     else if (vehicles.length === 1) vehicleId = vehicles[0].id;
   }
+  deps = []; useDep = new Set();
+  if (c) { const { data } = await sb.from("customer_deposits").select("*").eq("customer_id", c.id).eq("status", "open").order("id"); deps = data || []; }
   cart.forEach((l, i) => reprice(i));
   $("custSearchBox").classList.toggle("hide", !!c);
   renderCust(); renderGrid(); renderAll();
@@ -417,7 +469,9 @@ function renderCust() {
   const meta = [cust.phone, cust.price_list_id ? "Harga: " + priceListNames[cust.price_list_id] : null].filter(Boolean);
   const miss = custMissing(cust);
   $("custMeta").innerHTML = esc(meta.join(" · ")) + (cust.allow_tempo ? ' <span class="badge b-tempo">TEMPO</span>' : "")
-    + (miss.length && !sale ? ` <button class="link small danger" onclick="openCustModal('edit')">Lengkapi ${miss.join(", ")}</button>` : "");
+    + (miss.length && !sale ? ` <button class="link small danger" onclick="openCustModal('edit')">Lengkapi ${miss.join(", ")}</button>` : "")
+    + (!sale ? ` <button class="link small" onclick="openDp()">+ DP</button>` : "")
+    + (deps.length ? ` <span class="badge b-tempo">DP ${num(deps.reduce((a, d) => a + Number(d.amount), 0))}</span>` : "");
   const v = vehicles.find(x => x.id === vehicleId);
   const plateTxt0 = vehicleId === NO_CAR ? "Tanpa mobil" : null;
   const plateTxt = v ? v.plate : (sale ? sale.plate : "") || "";
@@ -572,7 +626,7 @@ const activeItems = () => (sale?.sale_items || []).filter(i => !i.cancelled_at);
 
 async function loadSale(id) {
   const { data, error } = await sb.from("sales")
-    .select("*, customers(*), vehicles(*, car_models(brand,model)), cashier:profiles!sales_cashier_id_fkey(full_name), sale_items(*, products(name,sku,is_service)), payments(*, bank_accounts(name))")
+    .select("*, customers(*), vehicles(*, car_models(brand,model)), cashier:profiles!sales_cashier_id_fkey(full_name), sale_items(*, products(name,sku,is_service)), payments(*, bank_accounts(name), customer_deposits(doc_no)), ticket:queue_tickets!sales_queue_ticket_id_fkey(code, queue_assignments(removed_at, mechanics(name)))")
     .eq("id", id).single();
   if (error) throw error;
   data.sale_items.sort((a, b) => a.id - b.id);
@@ -613,10 +667,12 @@ function renderQueueStrip() {
   // a car the cashier picked by customer/vehicle instead of the strip still gets linked to its queue ticket
   if (!qTicket && vehicleId > 0 && vehicleId !== qAutoVeh) {
     qAutoVeh = vehicleId;
-    const m = qCars.find(c => c.vehicle_id === vehicleId && !Number(c.invoices));
+    const m = qCars.find(c => c.vehicle_id === vehicleId && !Number(c.invoices)) || qCars.find(c => c.vehicle_id === vehicleId);
     if (m) { qTicket = m.id; toast(`Tersambung ke antrian ${esc(m.code)}.`); }
   }
-  el.innerHTML = `<span class="lbl">Antrian:</span>` + qCars.map(c => `<button class="${c.id === qTicket ? "on" : ""}" onclick="pickQueueCar(${c.id})"
+  const shown = qCars.filter(c => !Number(c.invoices) || c.id === qTicket);
+  if (!shown.length) { el.classList.add("hide"); return; }
+  el.innerHTML = `<span class="lbl">Antrian:</span>` + shown.map(c => `<button class="${c.id === qTicket ? "on" : ""}" onclick="pickQueueCar(${c.id})"
     style="${Number(c.invoices) && c.id !== qTicket ? "opacity:.5" : ""}"
     title="${esc((c.mechanics || "belum ada mekanik") + (c.day !== qCars[0].day ? " · kemarin" : "") + (Number(c.invoices) ? " · sudah " + c.invoices + " invoice" : ""))}">${st[c.status] || ""} ${esc(c.code)} · ${esc(c.plate)}${Number(c.invoices) ? " · ✓inv" : ""}</button>`).join("");
   el.classList.remove("hide");
@@ -637,13 +693,22 @@ async function pickQueueCar(id) {
 }
 
 function newInvoice() {
-  sale = null; cart = []; editing = -1; method = "bayar"; payLines = []; payDue = null; qTicket = null; qAutoVeh = null; discount = 0; discountNote = "";
+  sale = null; cart = []; editing = -1; method = "bayar"; payLines = []; payDue = null; qTicket = null; qAutoVeh = null; discount = 0; discountNote = ""; useDep = new Set();
   setCustomer(null);
   $("q").value = ""; renderGrid();
 }
 
 // ═══════════════════════ RENDER ═══════════════════════
-function renderAll() { renderLines(); renderFoot(); renderHeader(); renderQueueStrip(); }
+function renderAll() { renderLines(); renderFoot(); renderHeader(); renderQueueStrip(); renderMech(); }
+const saleMechs = s => s && s.ticket ? (s.ticket.queue_assignments || []).filter(a => !a.removed_at).map(a => a.mechanics.name).join(", ") : "";
+function renderMech() {
+  const el = $("mechLine");
+  let code = "", names = "";
+  if (sale && sale.ticket) { code = sale.ticket.code; names = saleMechs(sale); }
+  else if (!sale && qTicket) { const c = qCars.find(x => x.id === qTicket); if (c) { code = c.code; names = c.mechanics || ""; } }
+  el.classList.toggle("hide", !code);
+  el.innerHTML = code ? `🔧 Antrian <b>${esc(code)}</b> · Mekanik: <b>${esc(names || "belum ada")}</b>` : "";
+}
 
 function renderHeader() {
   $("invChip").textContent = sale ? `${sale.invoice_no}${sale.revision > 1 ? " · Rev " + sale.revision : ""}` : "INVOICE BARU";
@@ -712,8 +777,11 @@ function renderFoot() {
           oninput="this.value=this.value?num(parseRp(this.value)):''" onchange="discount=parseRp(this.value)||0;renderFoot()">
         <input style="flex:1.3" placeholder="keterangan (opsional)" value="${esc(discountNote)}" oninput="discountNote=this.value"></div>`;
     h += `<div class="total"><span>Total</span><b>${rp(tot)}</b></div>`;
+    if (cart.length) h += dpBlock();
+    if (dpUsed()) h += `<div class="sum"><span>Dibayar dengan DP</span><span>−${num(Math.min(dpUsed(), tot))}</span></div>`;
     if (tempoOK) h += `<div class="seg2"><button class="${method === "bayar" ? "on" : ""}" onclick="method='bayar';renderFoot()">Bayar sekarang</button><button class="${method === "tempo" ? "on" : ""}" onclick="method='tempo';renderFoot()">Tempo</button></div>`;
-    if (method !== "tempo" && tot > 0) h += payBlock(tot);
+    if (method !== "tempo" && tot - dpUsed() > 0) h += payBlock(tot - dpUsed());
+    else if (dpUsed() > tot) h += `<div class="notice warn">DP lebih besar dari total: kelebihan ${rp(dpUsed() - tot)} dikembalikan tunai (kembalian).</div>`;
     h += segPrint;
     const why = !cust ? "Pilih pelanggan dulu." : !vehicleId ? "Pilih kendaraan, atau \"Tanpa mobil\" kalau hanya beli barang."
       : vehicleId === NO_CAR && cartHasService() ? "Ada jasa di keranjang: pilih kendaraan (bukan \"Tanpa mobil\")." : custMissing(cust).length ? "Lengkapi data pelanggan: " + custMissing(cust).join(", ") + "." : "";
@@ -749,7 +817,9 @@ function renderFoot() {
         h += `<div class="payrow"><div><label>Dikembalikan lewat</label><select id="refundM">${payOptions("tunai")}</select></div>
               <div style="align-self:end"><button class="primary" style="width:100%" onclick="refund(${over})">Kembalikan ${rp(over)}</button></div></div>`;
       } else if (sisa > 0) {
-        h += payBlock(sisa);
+        h += dpBlock();
+        if (sisa - dpUsed() > 0) h += payBlock(sisa - dpUsed());
+        else if (dpUsed()) h += `<div class="notice warn">DP menutup sisa${dpUsed() > sisa ? `; kelebihan ${rp(dpUsed() - sisa)} jadi kembalian tunai` : ""}.</div>`;
       }
       h += segPrint;
       h += `<div class="acts"><button onclick="newInvoice()">Invoice baru</button>`;
@@ -772,8 +842,18 @@ const payOptions = sel => `<option value="tunai" ${sel === "tunai" ? "selected" 
   banks.map(b => `<option value="tf:${b.id}" ${sel === "tf:" + b.id ? "selected" : ""}>Transfer ${esc(b.name)}</option>`).join("");
 function payLabel(p) {
   if (p.is_change) return "Kembalian tunai";
+  if (p.method === "dp") return (p.amount < 0 ? "DP dibuka lagi · " : "DP · ") + (p.customer_deposits?.doc_no || "");
   const how = p.method === "transfer" ? "Transfer " + (p.bank_accounts?.name || "") : "Tunai";
   return (p.amount < 0 ? "Dikembalikan · " : "Dibayar · ") + how;
+}
+// open DPs of this customer, ticked = used as payment now
+const dpUsed = () => deps.filter(d => useDep.has(d.id)).reduce((a, d) => a + Number(d.amount), 0);
+function dpBlock() {
+  if (!deps.length) return "";
+  return `<div style="margin-bottom:8px;padding:8px 10px;border:1px dashed var(--accent);border-radius:8px"><label style="margin:0 0 4px">Pakai DP</label>` +
+    deps.map(d => `<label class="row small" style="margin:2px 0;color:var(--text);cursor:pointer"><input type="checkbox" style="width:auto" ${useDep.has(d.id) ? "checked" : ""}
+      onchange="this.checked?useDep.add(${d.id}):useDep.delete(${d.id});payLines=[];payDue=null;renderFoot()">
+      <span class="grow">${esc(d.doc_no)} · ${esc(d.note)}</span><b>${num(d.amount)}</b></label>`).join("") + `</div>`;
 }
 function payBlock(due) {
   if (payDue !== due || !payLines.length) { payLines = [{ m: "tunai", amt: due }]; payDue = due; }
@@ -796,8 +876,9 @@ function payRecalc() {
     ? `Diterima ${num(recv)}${diff > 0 ? ` · <b>kembalian tunai ${num(diff)}</b>` : ""}`
     : `Diterima ${num(recv)} · <b style="color:var(--red)">sisa ${num(-diff)}</b> (DP)`;
 }
-const payPayload = () => payLines.filter(l => l.amt > 0).map(l => l.m === "tunai"
-  ? { method: "tunai", amount: l.amt } : { method: "transfer", bank_account_id: Number(l.m.slice(3)), amount: l.amt });
+const payPayload = () => [...deps.filter(d => useDep.has(d.id)).map(d => ({ method: "dp", deposit_id: d.id, amount: Number(d.amount) })),
+  ...(document.getElementById("paySum") ? payLines.filter(l => l.amt > 0).map(l => l.m === "tunai"
+    ? { method: "tunai", amount: l.amt } : { method: "transfer", bank_account_id: Number(l.m.slice(3)), amount: l.amt }) : [])];
 
 // ═══════════════════════ ACTIONS ═══════════════════════
 const itemsPayload = () => cart.map(l => ({ product_id: l.pid, qty: l.qty, unit_price: l.price, reason: l.reason.trim() }));
@@ -832,7 +913,7 @@ function saveNew(payAndPrint) {
       const p = await sb.rpc("pay_sale_multi", { p_sale: s.id, p_lines: pay });
       if (p.error) { toast(`Invoice ${s.invoice_no} tersimpan, tapi pembayaran GAGAL: ${esc(p.error.message)}. Buka di Transaksi tertunda.`, "err"); afterSave(); return; }
       const recv = pay.reduce((a, l) => a + l.amount, 0);
-      if (recv < s.total) msg += ` · DP ${rp(recv)}`;
+      if (recv < s.total) msg += ` · dibayar sebagian ${rp(recv)}`;
       if (recv > s.total) msg += ` · kembalian ${rp(recv - s.total)}`;
     }
     if (payAndPrint) await doPrint(s.id);
@@ -878,8 +959,8 @@ function payExisting() {
     if (error) throw error;
     await doPrint(sale.id);
     toast(`Pembayaran ${rp(pay.reduce((a, l) => a + l.amount, 0))} tercatat · ${sale.invoice_no}`);
-    refreshPending(); payLines = []; payDue = null;
-    sale = await loadSale(sale.id); renderAll();
+    refreshPending(); payLines = []; payDue = null; useDep = new Set();
+    sale = await loadSale(sale.id); await setCustomer(sale.customers, sale.vehicle_id);
   });
 }
 
@@ -967,6 +1048,115 @@ async function loadTx(which) {
 
 function closeModal(id) { $(id).classList.remove("open"); }
 
+// ═══ DP (uang muka) ═══
+function openDp() {
+  if (!cust) { toast("Pilih pelanggan dulu.", "err"); return; }
+  $("dpCust").innerHTML = `Pelanggan: <b>${esc(cust.name)}</b> ${esc(cust.phone || "")}`;
+  $("dpAmt").value = ""; $("dpNote").value = ""; $("dpErr").textContent = "";
+  $("dpMethod").innerHTML = payOptions("tunai");
+  $("dpModal").classList.add("open"); setTimeout(() => $("dpAmt").focus(), 50);
+}
+async function saveDp() {
+  const amt = parseRp($("dpAmt").value || ""), m = $("dpMethod").value, note = $("dpNote").value.trim();
+  if (!amt) { $("dpErr").textContent = "Isi jumlah DP."; return; }
+  if (!note) { $("dpErr").textContent = "Tulis DP untuk apa."; return; }
+  $("dpSave").disabled = true;
+  const { data, error } = await sb.rpc("create_deposit", { p_customer: cust.id, p_amount: amt, p_method: m === "tunai" ? "tunai" : "transfer",
+    p_bank: m === "tunai" ? null : Number(m.slice(3)), p_note: note });
+  $("dpSave").disabled = false;
+  if (error) { $("dpErr").textContent = error.message; return; }
+  closeModal("dpModal"); toast(`${data.doc_no} · DP ${rp(data.amount)} tersimpan.`);
+  printDeposit(data, cust);
+  await setCustomer(cust, vehicleId > 0 ? vehicleId : null);
+}
+function printDeposit(d, c) {
+  const L = ME.locations, how = d.method === "transfer" ? "Transfer " + ((banks.find(b => b.id === d.bank_account_id) || {}).name || "") : "Tunai";
+  const when = new Date(d.created_at).toLocaleString("id-ID", { timeZone: "Asia/Jakarta" });
+  $("print").innerHTML = printFmt === "small"
+    ? `<div class="p-small"><div style="text-align:center"><b>${esc(L.name.toUpperCase())}</b><br>KWITANSI UANG MUKA</div><div class="p-hr"></div>
+        ${esc(d.doc_no)}<br>${when} · ${esc(ME.full_name)}<br>${esc(c.name)} ${esc(c.phone || "")}<div class="p-hr"></div>
+        Untuk: ${esc(d.note)}<br><b>DP: ${num(d.amount)}</b> (${esc(how)})<div class="p-hr"></div>
+        <div style="text-align:center">Simpan kwitansi ini.<br>DP dipotong saat pelunasan.</div></div>`
+    : `<div class="p-inv"><table><tr><td style="width:60%"><b style="font-size:14pt">${esc(L.name.toUpperCase())}</b><br>${esc(L.address || "")}<br>${esc(L.phone || "")}</td>
+        <td class="p-r"><b style="font-size:13pt">KWITANSI UANG MUKA</b><br>${esc(d.doc_no)}<br>${when}</td></tr></table><div class="p-hr"></div>
+        <table><tr><td>Sudah terima dari : ${esc(c.name)}${c.phone ? " / " + esc(c.phone) : ""}</td></tr><tr><td>Untuk : ${esc(d.note)}</td></tr>
+        <tr><td>Sebesar : <b style="font-size:13pt">Rp ${num(d.amount)}</b> (${esc(how)})</td></tr></table><br>
+        <table><tr><td style="width:60%">DP ini dipotong dari invoice saat pelunasan. Simpan kwitansi ini.</td>
+        <td style="text-align:center">Penerima,<br><br><br>( ${esc(ME.full_name)} )</td></tr></table></div>`;
+  window.print();
+}
+async function openDpList() {
+  $("dpListModal").classList.add("open");
+  $("dpListBody").innerHTML = `<tr><td colspan="6" class="muted">Memuat…</td></tr>`;
+  const { data, error } = await sb.from("customer_deposits").select("*, customers(name,phone)").eq("status", "open").eq("location_id", ME.location_id).order("id");
+  if (error) { $("dpListBody").innerHTML = `<tr><td colspan="6" class="err">${esc(error.message)}</td></tr>`; return; }
+  window.__dps = data;
+  $("dpListBody").innerHTML = data.map((d, i) => `<tr><td>${esc(d.doc_no)}</td><td class="small">${new Date(d.created_at).toLocaleDateString("id-ID", { timeZone: "Asia/Jakarta" })}</td>
+    <td>${esc(d.customers.name)}</td><td class="small">${esc(d.note)}</td><td class="num"><b>${num(d.amount)}</b></td>
+    <td style="white-space:nowrap"><button class="link small" onclick="printDeposit(__dps[${i}], __dps[${i}].customers)">cetak</button>
+      <button class="link small danger" onclick="refundDp(${i})">kembalikan</button></td></tr>`).join("")
+    || `<tr><td colspan="6" class="muted">Tidak ada DP terbuka.</td></tr>`;
+}
+async function refundDp(i) {
+  const d = __dps[i];
+  const why = prompt(`Kembalikan ${d.doc_no} ${num(d.amount)} ke ${d.customers.name}?\nAlasan (wajib, muncul di Tinjauan owner):`); if (!why || !why.trim()) return;
+  const via = prompt(`Dikembalikan lewat? Ketik 0 = Tunai` + banks.map((b, k) => `, ${k + 1} = Transfer ${b.name}`).join(""), "0"); if (via === null) return;
+  const k = Number(via), bank = k > 0 ? banks[k - 1] : null;
+  if (k > 0 && !bank) { toast("Pilihan rekening tidak ada.", "err"); return; }
+  const { error } = await sb.rpc("refund_deposit", { p_id: d.id, p_method: bank ? "transfer" : "tunai", p_bank: bank ? bank.id : null, p_reason: why.trim() });
+  if (error) { toast(esc(error.message), "err"); return; }
+  toast(`${d.doc_no} dikembalikan.`); openDpList(); if (cust) setCustomer(cust, vehicleId > 0 ? vehicleId : null);
+}
+
+// ═══ PENGELUARAN ═══
+let expCats = null;
+const EXK = { beban: "Beban", koperasi_keluar: "Koperasi keluar", koperasi_masuk: "Koperasi masuk", setor_cm: "Setor laba ke CM", hutang_cm: "Bayar hutang CM", prive: "Prive" };
+async function openExp() {
+  if (!expCats) { const { data } = await sb.from("expense_categories").select("*").eq("is_active", true).order("sort").order("name"); expCats = data || []; }
+  $("exCat").innerHTML = `<option value="">— pilih —</option>` + expCats.map(c => `<option value="${c.id}">${esc(c.name)}</option>`).join("");
+  $("exFrom").innerHTML = payOptions("tunai").replace(/>Tunai</, ">Kas (tunai)<");
+  $("exErr").textContent = ""; expKindChanged();
+  $("expModal").classList.add("open"); loadExp();
+}
+function expKindChanged() {
+  const k = $("exKind").value;
+  $("exCatBox").classList.toggle("hide", k !== "beban");
+  $("exPersonBox").classList.toggle("hide", !k.startsWith("koperasi"));
+  $("exFromLbl").textContent = k === "koperasi_masuk" ? "Diterima ke" : "Dibayar dari";
+}
+async function saveExp() {
+  const k = $("exKind").value, amt = parseRp($("exAmt").value || ""), from = $("exFrom").value, err = $("exErr");
+  err.textContent = "";
+  $("exSave").disabled = true;
+  const { data, error } = await sb.rpc("add_expense", { p_day: null, p_kind: k, p_category: Number($("exCat").value) || null, p_amount: amt || null,
+    p_paid_from: from === "tunai" ? "tunai" : "transfer", p_bank: from === "tunai" ? null : Number(from.slice(3)),
+    p_person: $("exPerson").value.trim() || null, p_description: $("exDesc").value.trim() || null });
+  $("exSave").disabled = false;
+  if (error) { err.textContent = error.message; return; }
+  toast(`${data.doc_no} · ${rp(data.amount)} tersimpan.`);
+  $("exAmt").value = ""; $("exDesc").value = ""; $("exPerson").value = ""; loadExp();
+}
+async function loadExp() {
+  const { data, error } = await sb.from("expenses").select("*, expense_categories(name), bank_accounts(name), creator:profiles!expenses_created_by_fkey(full_name)")
+    .eq("location_id", ME.location_id).eq("day", todayJkt()).order("id", { ascending: false });
+  if (error) { $("exBody").innerHTML = `<tr><td colspan="7" class="err">${esc(error.message)}</td></tr>`; return; }
+  const live = data.filter(e => !e.cancelled_at), sum = k => live.filter(e => k(e)).reduce((a, e) => a + Number(e.amount), 0);
+  $("exBody").innerHTML = data.map(e => `<tr class="${e.cancelled_at ? "off" : ""}"><td class="small">${esc(e.doc_no)}</td>
+    <td>${EXK[e.kind]}${e.expense_categories ? `<div class="tiny muted">${esc(e.expense_categories.name)}</div>` : ""}${e.person ? `<div class="tiny muted">${esc(e.person)}</div>` : ""}</td>
+    <td class="small">${esc(e.description)}${e.cancelled_at ? `<div style="color:var(--red)">BATAL: ${esc(e.cancel_reason)}</div>` : ""}</td>
+    <td class="small">${e.paid_from === "tunai" ? "Kas" : esc(e.bank_accounts?.name || "")}</td><td class="num">${e.kind === "koperasi_masuk" ? "+" : ""}${num(e.amount)}</td>
+    <td class="small">${esc(e.creator?.full_name || "")}</td>
+    <td>${e.cancelled_at ? "" : `<button class="link small danger" onclick="cancelExp(${e.id},'${esc(e.doc_no)}')">batal</button>`}</td></tr>`).join("")
+    + (data.length ? `<tr><td colspan="4"><b>Total keluar hari ini</b> <span class="tiny muted">(tanpa koperasi masuk)</span></td><td class="num"><b>${num(sum(e => e.kind !== "koperasi_masuk"))}</b></td><td colspan="2"></td></tr>` : "")
+    || `<tr><td colspan="7" class="muted">Belum ada pengeluaran hari ini.</td></tr>`;
+}
+async function cancelExp(id, doc) {
+  const why = prompt(`Batalkan ${doc}? Alasan (wajib):`); if (!why || !why.trim()) return;
+  const { error } = await sb.rpc("cancel_expense", { p_id: id, p_reason: why.trim() });
+  if (error) { toast(esc(error.message), "err"); return; }
+  toast(`${doc} dibatalkan.`); loadExp();
+}
+
 // ═══════════════════════ PRINT ═══════════════════════
 async function doPrint(id) {
   const s = await loadSale(id);
@@ -991,7 +1181,8 @@ function printInvoice(s) {
     <div class="p-hr"></div>
     <table><tr><td>Pelanggan : ${esc(s.customers.name)}${s.customers.phone ? " / " + esc(s.customers.phone) : ""}</td></tr>
       ${s.customers.address ? `<tr><td>Alamat    : ${esc(s.customers.address)}</td></tr>` : ""}
-      <tr><td>Kendaraan : ${esc(veh)}</td></tr></table>
+      <tr><td>Kendaraan : ${esc(veh)}</td></tr>
+      ${s.ticket ? `<tr><td>Mekanik   : ${esc(saleMechs(s) || "-")} (antrian ${esc(s.ticket.code)})</td></tr>` : ""}</table>
     <br>
     <table><tr><th style="width:5%">No</th><th>Barang / Jasa</th><th class="p-r" style="width:8%">Qty</th><th class="p-r" style="width:15%">Harga</th><th class="p-r" style="width:17%">Jumlah</th></tr>
       ${items.map((it, i) => `<tr><td>${i + 1}</td><td>${esc(it.products.name)}</td><td class="p-r">${num(it.qty)}</td><td class="p-r">${num(it.unit_price)}</td><td class="p-r">${num(it.line_total)}</td></tr>`).join("")}
@@ -1004,7 +1195,9 @@ function printInvoice(s) {
       ${s.status !== "void" && s.payments.length ? `<tr><td><b>SISA</b></td><td class="p-r"><b>${num(Math.max(sisa, 0))}</b></td></tr>` : ""}
       </table></td></tr></table>
     <br><br>
-    <table><tr><td style="text-align:center;width:50%">Hormat kami,<br><br><br>( ${esc(s.cashier?.full_name || "")} )</td><td style="text-align:center">Penerima,<br><br><br>(.................)</td></tr></table>
+    <table><tr><td style="text-align:center;width:33%">Hormat kami,<br><br><br>( ${esc(s.cashier?.full_name || "")} )</td>
+      ${s.ticket ? `<td style="text-align:center;width:33%">Mekanik (sudah dicek),<br><br><br>( ${esc(saleMechs(s) || "................")} )</td>` : ""}
+      <td style="text-align:center">Penerima,<br><br><br>(.................)</td></tr></table>
   </div>`;
 }
 
@@ -1016,6 +1209,7 @@ function printSmall(s) {
     <div class="p-hr"></div>
     ${s.invoice_no}${s.revision > 1 ? " Rev " + s.revision : ""}<br>${invDate(s)} · ${esc(s.cashier?.full_name || "")}<br>
     ${esc(s.customers.name)}${s.plate ? " · " + esc(s.plate) : ""}
+    ${s.ticket ? `<br>Mekanik: ${esc(saleMechs(s) || "-")}` : ""}
     <div class="p-hr"></div>
     <table>${items.map(it => `<tr><td colspan="2">${esc(it.products.name)}</td></tr><tr><td>&nbsp; ${num(it.qty)} x ${num(it.unit_price)}</td><td class="p-r">${num(it.line_total)}</td></tr>`).join("")}</table>
     <div class="p-hr"></div>

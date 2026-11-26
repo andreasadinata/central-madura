@@ -59,6 +59,7 @@
   <div class="tabs2">
     <button id="t-laba" class="on" onclick="tab('laba')">Penjualan & laba kotor</button>
     <button id="t-beli" onclick="tab('beli')">Pembelian</button>
+    <button id="t-exp" onclick="tab('exp')">Pengeluaran</button>
   </div>
 
   <!-- ═══ PENJUALAN & LABA KOTOR ═══ -->
@@ -121,6 +122,30 @@
   </div>
 </div>
 
+  <!-- ═══ PENGELUARAN ═══ -->
+  <div class="wrap hide" id="p-exp">
+    <div class="filters">
+      <input type="date" id="eFrom"> – <input type="date" id="eTo">
+      <button class="small" onclick="setRange('e','today')">Hari ini</button>
+      <button class="small" onclick="setRange('e','month')">Bulan ini</button>
+      <button class="small" onclick="setRange('e','last')">Bulan lalu</button>
+      <button class="small" onclick="setRange('e','quarter')">Kuartal ini</button>
+      <span style="width:1px;height:24px;background:var(--border)"></span>
+      <div class="ms" id="eBranch"></div>
+      <div class="ms" id="eKind"></div>
+      <div class="ms" id="eCat"></div>
+      <label class="row small" style="margin:0"><input type="checkbox" id="eCancelled" style="width:auto" onchange="renderExp()"> tampilkan yang dibatalkan</label>
+      <span class="grow"></span><button class="small" onclick="csvExp()">CSV</button>
+    </div>
+    <div class="cards" id="eCards"></div>
+    <div class="grid2" style="display:grid;grid-template-columns:1fr 1fr;gap:14px;align-items:start">
+      <div class="panel"><table><thead><tr><th>Beban per kategori</th><th class="num">Jumlah</th><th class="num">Baris</th></tr></thead><tbody id="eCatBody"></tbody></table></div>
+      <div class="panel"><table><thead><tr><th>Koperasi per karyawan</th><th class="num">Pinjam</th><th class="num">Bayar</th><th class="num">Sisa</th></tr></thead><tbody id="eKopBody"></tbody></table>
+        <p class="tiny muted" style="padding:8px 12px">Sisa koperasi dihitung dari semua tanggal, bukan hanya periode ini.</p></div>
+    </div>
+    <div class="panel"><table><thead><tr><th>Tanggal</th><th>No</th><th>Cabang</th><th>Jenis</th><th>Kategori / nama</th><th>Keterangan</th><th>Dari</th><th class="num">Jumlah</th><th>Oleh</th></tr></thead><tbody id="eBody"></tbody></table></div>
+  </div>
+
 <!-- lines behind a row -->
 <div class="overlay" id="linesModal"><div class="modal" style="width:1150px">
   <header><h3 id="lnTitle">Rincian</h3><button onclick="closeModal('linesModal')">Tutup</button></header>
@@ -158,7 +183,7 @@ function setRange(p, kind) {
   if (kind === "quarter") a = new Date(t.getFullYear(), Math.floor(t.getMonth() / 3) * 3, 1);
   if (kind === "year") a = new Date(t.getFullYear(), 0, 1);
   $(p + "From").value = ymd(a); $(p + "To").value = ymd(b);
-  p === "l" ? loadLaba() : loadBeli();
+  p === "l" ? loadLaba() : p === "b" ? loadBeli() : loadExp();
 }
 
 // multi-select dropdown: ms(el, label, options[{v,l}], onChange) → el.get() returns selected values ([] = all)
@@ -189,8 +214,9 @@ function ms(el, label, options, onChange) {
 }
 
 function tab(n) {
-  ["laba", "beli"].forEach(x => { $("p-" + x).classList.toggle("hide", x !== n); $("t-" + x).classList.toggle("on", x === n); });
+  ["laba", "beli", "exp"].forEach(x => { $("p-" + x).classList.toggle("hide", x !== n); $("t-" + x).classList.toggle("on", x === n); });
   if (n === "beli" && !beliRows) setRange("b", "month");
+  if (n === "exp" && !expRows) setRange("e", "month");
 }
 function csv(name, rows) {
   const t = rows.map(r => r.map(v => `"${String(v ?? "").replace(/"/g, '""')}"`).join(",")).join("\n");
@@ -213,6 +239,7 @@ async function start() {
   $("h2").innerHTML = `<option value="">—</option>` + H.map(([v, l]) => `<option value="${v}">${l}</option>`).join("");
   ["lFrom", "lTo"].forEach(id => $(id).onchange = loadLaba);
   ["bFrom", "bTo"].forEach(id => $(id).onchange = loadBeli);
+  ["eFrom", "eTo"].forEach(id => $(id).onchange = loadExp);
   setRange("l", "month");
 }
 
@@ -371,6 +398,54 @@ function csvBeli() {
   const h2 = $("h2").value && $("h2").value !== $("h1").value;
   csv(`pembelian_${$("bFrom").value}_${$("bTo").value}.csv`, [[$("h1").selectedOptions[0].text, ...(h2 ? [$("h2").selectedOptions[0].text] : []), "Qty", "Total beli", "Harga rata2", "Termurah", "Termahal", "Dokumen"],
     ...beliGroups.map(g => [g.l1, ...(h2 ? [g.l2] : []), g.qty, g.total, g.avg == null ? "" : Math.round(g.avg), g.min ?? "", g.max ?? "", g.docs])]);
+}
+// ═══ PENGELUARAN ═══
+const EXK = { beban: "Beban", koperasi_keluar: "Koperasi keluar", koperasi_masuk: "Koperasi masuk", setor_cm: "Setor laba ke CM", hutang_cm: "Bayar hutang CM", prive: "Prive" };
+let expRows = null, kopAll = [];
+async function loadExp() {
+  if (!$("eFrom").value || !$("eTo").value) return;
+  $("eBody").innerHTML = `<tr><td colspan="9" class="muted">Memuat…</td></tr>`;
+  try {
+    expRows = await fetchAll(() => sb.from("expenses").select("*, expense_categories(name), bank_accounts(name), creator:profiles!expenses_created_by_fkey(full_name)")
+      .gte("day", $("eFrom").value).lte("day", $("eTo").value).order("day").order("id"));
+    kopAll = await fetchAll(() => sb.from("expenses").select("location_id,kind,person,amount").in("kind", ["koperasi_keluar", "koperasi_masuk"]).is("cancelled_at", null).order("id"));
+  } catch (e) { $("eBody").innerHTML = `<tr><td colspan="9" class="err">${esc(errText(e))}</td></tr>`; return; }
+  ms($("eBranch"), "Cabang", locs.filter(l => ME.role === "owner" || l.id === ME.location_id).map(l => ({ v: String(l.id), l: l.code })), renderExp);
+  ms($("eKind"), "Jenis", Object.entries(EXK).map(([v, l]) => ({ v, l })), renderExp);
+  ms($("eCat"), "Kategori", [...new Set(expRows.map(e => e.expense_categories?.name).filter(Boolean))].sort().map(v => ({ v, l: v })), renderExp);
+  renderExp();
+}
+function expFiltered(all) {
+  const br = $("eBranch").get(), kd = $("eKind").get(), ct = $("eCat").get(), canc = $("eCancelled").checked;
+  return expRows.filter(e => (all || canc || !e.cancelled_at) && (!br.length || br.includes(String(e.location_id))) && (!kd.length || kd.includes(e.kind)) &&
+    (!ct.length || ct.includes(e.expense_categories?.name)));
+}
+function renderExp() {
+  if (!expRows) return;
+  const R = expFiltered(), live = R.filter(e => !e.cancelled_at), sum = f => live.filter(f).reduce((a, e) => a + Number(e.amount), 0);
+  const code = id => (locs.find(l => l.id === id) || {}).code || "?";
+  $("eCards").innerHTML = [["Beban", rp(sum(e => e.kind === "beban")), "masuk laba rugi"], ["Setor laba ke CM", rp(sum(e => e.kind === "setor_cm")), "bukan beban"],
+    ["Bayar hutang CM", rp(sum(e => e.kind === "hutang_cm")), "bukan beban"], ["Prive", rp(sum(e => e.kind === "prive")), "bukan beban"],
+    ["Koperasi keluar − masuk", rp(sum(e => e.kind === "koperasi_keluar") - sum(e => e.kind === "koperasi_masuk")), "pinjaman karyawan, bukan beban"]]
+    .map(([l, v, s2]) => `<div class="kpi"><div class="l">${l}</div><div class="v">${v}</div><div class="s">${s2}</div></div>`).join("");
+  const cats = {}; live.filter(e => e.kind === "beban").forEach(e => { const k = e.expense_categories?.name || "?"; cats[k] = cats[k] || { t: 0, n: 0 }; cats[k].t += Number(e.amount); cats[k].n++; });
+  $("eCatBody").innerHTML = Object.entries(cats).sort((a, b) => b[1].t - a[1].t).map(([k, v]) => `<tr><td>${esc(k)}</td><td class="num">${num(v.t)}</td><td class="num">${v.n}</td></tr>`).join("")
+    || `<tr><td colspan="3" class="muted">Tidak ada beban.</td></tr>`;
+  const br = $("eBranch").get(), kop = {};
+  kopAll.filter(e => !br.length || br.includes(String(e.location_id))).forEach(e => { kop[e.person] = kop[e.person] || { o: 0, i: 0 }; kop[e.person][e.kind === "koperasi_keluar" ? "o" : "i"] += Number(e.amount); });
+  $("eKopBody").innerHTML = Object.entries(kop).sort((a, b) => (b[1].o - b[1].i) - (a[1].o - a[1].i)).map(([k, v]) => `<tr><td>${esc(k)}</td><td class="num">${num(v.o)}</td><td class="num">${num(v.i)}</td>
+    <td class="num ${v.o - v.i < 0 ? "neg" : ""}"><b>${num(v.o - v.i)}</b></td></tr>`).join("") || `<tr><td colspan="4" class="muted">Belum ada koperasi.</td></tr>`;
+  $("eBody").innerHTML = R.map(e => `<tr class="${e.cancelled_at ? "off" : ""}"><td class="small">${e.day}</td><td class="small">${esc(e.doc_no)}</td><td>${esc(code(e.location_id))}</td>
+    <td>${EXK[e.kind]}</td><td class="small">${esc(e.expense_categories?.name || e.person || "")}</td>
+    <td class="small">${esc(e.description)}${e.cancelled_at ? `<div style="color:var(--red)">BATAL: ${esc(e.cancel_reason)}</div>` : ""}</td>
+    <td class="small">${e.paid_from === "tunai" ? "Kas" : esc(e.bank_accounts?.name || "")}</td><td class="num">${e.kind === "koperasi_masuk" ? "+" : ""}${num(e.amount)}</td>
+    <td class="small">${esc(e.creator?.full_name || "")}</td></tr>`).join("") || `<tr><td colspan="9" class="muted">Tidak ada pengeluaran.</td></tr>`;
+}
+function csvExp() {
+  const code = id => (locs.find(l => l.id === id) || {}).code || "?";
+  csv(`pengeluaran_${$("eFrom").value}_${$("eTo").value}.csv`, [["Tanggal", "No", "Cabang", "Jenis", "Kategori", "Nama karyawan", "Keterangan", "Dari", "Jumlah", "Oleh", "Dibatalkan", "Alasan batal"],
+    ...expFiltered().map(e => [e.day, e.doc_no, code(e.location_id), EXK[e.kind], e.expense_categories?.name || "", e.person || "", e.description,
+      e.paid_from === "tunai" ? "Kas" : e.bank_accounts?.name || "", e.amount, e.creator?.full_name || "", e.cancelled_at ? "ya" : "", e.cancel_reason || ""])]);
 }
 authGate(start);
 </script>
