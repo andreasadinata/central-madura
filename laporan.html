@@ -400,14 +400,15 @@ function csvBeli() {
     ...beliGroups.map(g => [g.l1, ...(h2 ? [g.l2] : []), g.qty, g.total, g.avg == null ? "" : Math.round(g.avg), g.min ?? "", g.max ?? "", g.docs])]);
 }
 // ═══ PENGELUARAN ═══
-const EXK = { beban: "Beban", koperasi_keluar: "Koperasi keluar", koperasi_masuk: "Koperasi masuk", setor_cm: "Setor laba ke CM", hutang_cm: "Bayar hutang CM", prive: "Prive" };
-let expRows = null, kopAll = [];
+const EXK = { beban: "Beban", koperasi_keluar: "Koperasi keluar", koperasi_masuk: "Koperasi masuk", setor_cm: "Setor laba ke CM", hutang_cm: "Bayar hutang CM", prive: "Prive", titipan_masuk: "Titipan masuk", titipan_keluar: "Titipan dikembalikan" };
+let expRows = null, kopAll = [], depRows = [];
 async function loadExp() {
   if (!$("eFrom").value || !$("eTo").value) return;
   $("eBody").innerHTML = `<tr><td colspan="9" class="muted">Memuat…</td></tr>`;
   try {
-    expRows = await fetchAll(() => sb.from("expenses").select("*, expense_categories(name), bank_accounts(name), creator:profiles!expenses_created_by_fkey(full_name)")
+    expRows = await fetchAll(() => sb.from("expenses").select("*, expense_categories(name,grp,line), bank_accounts(name), creator:profiles!expenses_created_by_fkey(full_name)")
       .gte("day", $("eFrom").value).lte("day", $("eTo").value).order("day").order("id"));
+    const dp = await sb.rpc("depreciation_by_month", { p_from: $("eFrom").value, p_to: $("eTo").value }); if (dp.error) throw dp.error; depRows = dp.data || [];
     kopAll = await fetchAll(() => sb.from("expenses").select("location_id,kind,person,amount").in("kind", ["koperasi_keluar", "koperasi_masuk"]).is("cancelled_at", null).order("id"));
   } catch (e) { $("eBody").innerHTML = `<tr><td colspan="9" class="err">${esc(errText(e))}</td></tr>`; return; }
   ms($("eBranch"), "Cabang", locs.filter(l => ME.role === "owner" || l.id === ME.location_id).map(l => ({ v: String(l.id), l: l.code })), renderExp);
@@ -424,12 +425,19 @@ function renderExp() {
   if (!expRows) return;
   const R = expFiltered(), live = R.filter(e => !e.cancelled_at), sum = f => live.filter(f).reduce((a, e) => a + Number(e.amount), 0);
   const code = id => (locs.find(l => l.id === id) || {}).code || "?";
-  $("eCards").innerHTML = [["Beban", rp(sum(e => e.kind === "beban")), "masuk laba rugi"], ["Setor laba ke CM", rp(sum(e => e.kind === "setor_cm")), "bukan beban"],
+  const ln = l => e => e.kind === "beban" && (e.expense_categories?.line || "beban") === l;
+  const brs = $("eBranch").get(), dep = depRows.filter(d => !brs.length || brs.includes(String(d.location_id))).reduce((a, d) => a + Number(d.amount), 0);
+  $("eCards").innerHTML = [["Beban operasional", rp(sum(ln("beban"))), "masuk laba rugi"], ["Penyusutan aset", rp(dep), "per bulan, dari tab Aset · masuk laba rugi"],
+    ["Barang / jasa luar", rp(sum(ln("hpp_luar"))), "untuk mobil pelanggan · masuk HPP"], ["Beli aset", rp(sum(ln("aset"))), "bukan beban bulan ini (jadi penyusutan)"],
+    ["Titipan masuk − kembali", rp(sum(e => e.kind === "titipan_masuk") - sum(e => e.kind === "titipan_keluar")), "harus 0 kalau sudah beres"], ["Setor laba ke CM", rp(sum(e => e.kind === "setor_cm")), "bukan beban"],
     ["Bayar hutang CM", rp(sum(e => e.kind === "hutang_cm")), "bukan beban"], ["Prive", rp(sum(e => e.kind === "prive")), "bukan beban"],
     ["Koperasi keluar − masuk", rp(sum(e => e.kind === "koperasi_keluar") - sum(e => e.kind === "koperasi_masuk")), "pinjaman karyawan, bukan beban"]]
     .map(([l, v, s2]) => `<div class="kpi"><div class="l">${l}</div><div class="v">${v}</div><div class="s">${s2}</div></div>`).join("");
-  const cats = {}; live.filter(e => e.kind === "beban").forEach(e => { const k = e.expense_categories?.name || "?"; cats[k] = cats[k] || { t: 0, n: 0 }; cats[k].t += Number(e.amount); cats[k].n++; });
-  $("eCatBody").innerHTML = Object.entries(cats).sort((a, b) => b[1].t - a[1].t).map(([k, v]) => `<tr><td>${esc(k)}</td><td class="num">${num(v.t)}</td><td class="num">${v.n}</td></tr>`).join("")
+  const cats = {}; live.filter(e => e.kind === "beban").forEach(e => { const g = e.expense_categories?.grp || "?", k = e.expense_categories?.name || "?";
+    cats[g] = cats[g] || { t: 0, n: 0, c: {} }; cats[g].t += Number(e.amount); cats[g].n++; cats[g].c[k] = cats[g].c[k] || { t: 0, n: 0 }; cats[g].c[k].t += Number(e.amount); cats[g].c[k].n++; });
+  if (dep) cats["Penyusutan aset"] = { t: dep, n: 0, c: {} };
+  $("eCatBody").innerHTML = Object.entries(cats).sort((a, b) => a[0].localeCompare(b[0])).map(([g, v]) => `<tr style="background:var(--bg2,#f6f6f8)"><td><b>${esc(g)}</b></td><td class="num"><b>${num(v.t)}</b></td><td class="num">${v.n || ""}</td></tr>`
+    + Object.entries(v.c).sort((a, b) => b[1].t - a[1].t).map(([k, x]) => `<tr><td style="padding-left:22px">${esc(k)}</td><td class="num">${num(x.t)}</td><td class="num">${x.n}</td></tr>`).join("")).join("")
     || `<tr><td colspan="3" class="muted">Tidak ada beban.</td></tr>`;
   const br = $("eBranch").get(), kop = {};
   kopAll.filter(e => !br.length || br.includes(String(e.location_id))).forEach(e => { kop[e.person] = kop[e.person] || { o: 0, i: 0 }; kop[e.person][e.kind === "koperasi_keluar" ? "o" : "i"] += Number(e.amount); });
@@ -438,7 +446,7 @@ function renderExp() {
   $("eBody").innerHTML = R.map(e => `<tr class="${e.cancelled_at ? "off" : ""}"><td class="small">${e.day}</td><td class="small">${esc(e.doc_no)}</td><td>${esc(code(e.location_id))}</td>
     <td>${EXK[e.kind]}</td><td class="small">${esc(e.expense_categories?.name || e.person || "")}</td>
     <td class="small">${esc(e.description)}${e.cancelled_at ? `<div style="color:var(--red)">BATAL: ${esc(e.cancel_reason)}</div>` : ""}</td>
-    <td class="small">${e.paid_from === "tunai" ? "Kas" : esc(e.bank_accounts?.name || "")}</td><td class="num">${e.kind === "koperasi_masuk" ? "+" : ""}${num(e.amount)}</td>
+    <td class="small">${e.paid_from === "tunai" ? "Kas" : esc(e.bank_accounts?.name || "")}</td><td class="num">${e.kind === "koperasi_masuk" || e.kind === "titipan_masuk" ? "+" : ""}${num(e.amount)}</td>
     <td class="small">${esc(e.creator?.full_name || "")}</td></tr>`).join("") || `<tr><td colspan="9" class="muted">Tidak ada pengeluaran.</td></tr>`;
 }
 function csvExp() {

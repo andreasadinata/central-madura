@@ -1,0 +1,8 @@
+-- v19_expense_categories_assets (2026-11-26)
+-- expense_categories: + grp, line ('beban' | 'hpp_luar' | 'aset'), hint, life_months. Old list regrouped (ids kept), ~34 categories in groups A–I + Lain-lain.
+-- expenses.kind: + titipan_masuk / titipan_keluar (money that isn't ours: wrong transfers, another branch's money) — in cash book, not beban.
+-- assets table; expense in an 'Aset: …' category (>= Rp 1 juta) creates the asset automatically, cancelling the expense removes it.
+-- asset_month_charge (straight line from purchase month, life_months months, stops after disposal month), asset_list(month),
+-- depreciation_by_month(from,to), save_asset / dispose_asset (owner only).
+-- Tinjauan: every "Lain-lain" beban and every titipan.
+-- Seeded CBP assets from the PENYUSUTAN sheet (Okt 2026).

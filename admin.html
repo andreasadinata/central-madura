@@ -27,6 +27,11 @@
   .results.inline{position:static;margin-top:4px;max-height:260px;box-shadow:none}
   .results div{padding:8px 10px;cursor:pointer;border-bottom:1px solid var(--border)}
   .results div:hover,.results div.sel{background:var(--accent-soft)}
+  .cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:10px}
+  .kpi{background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:12px 14px}
+  .kpi .l{font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.05em}
+  .kpi .v{font-size:22px;font-weight:700;margin-top:4px}
+  .kpi .s{font-size:12px;color:var(--muted);margin-top:2px}
 </style>
 </head>
 <body>
@@ -65,6 +70,7 @@
         <button id="t-opname" onclick="tab('opname')">Stok opname</button>
         <button id="t-pelanggan" onclick="tab('pelanggan')">Pelanggan</button>
         <button id="t-rekening" onclick="tab('rekening')">Rekening bank</button>
+        <button id="t-aset" onclick="tab('aset')">Aset & penyusutan</button>
         <button id="t-pengguna" onclick="tab('pengguna')" class="hide">Pengguna</button>
       </div></div>
   </div>
@@ -211,6 +217,18 @@
     <div class="panel"><table><thead><tr><th>Nama (mis. "BCA 123-456 a/n Andreas")</th><th>Milik cabang <span class="tiny muted">(cabang itu cek saldonya saat tutup kasir)</span></th><th>Status</th></tr></thead><tbody id="btable"></tbody></table></div>
   </div>
 
+  <!-- ASET -->
+  <div class="page hide" id="p-aset">
+    <div class="bar"><label class="small">Bulan</label><input type="month" id="asMonth" style="width:160px" onchange="loadAssets()">
+      <label class="small"><input type="checkbox" id="asAll" onchange="renderAssets()"> tampilkan yang sudah habis disusutkan / dilepas</label>
+      <span class="grow"></span><button class="primary owner-only" onclick="editAsset(null)">+ Aset lama</button></div>
+    <p class="small muted" style="margin:0 0 8px">Barang ≥ Rp 1 juta yang dipakai lebih dari 1 tahun. Harganya tidak langsung jadi beban: dibagi rata per bulan selama umurnya (penyusutan).
+      Aset baru otomatis masuk dari Pengeluaran kategori <b>Aset: …</b>. Tombol "+ Aset lama" untuk barang yang dibeli sebelum pakai sistem.</p>
+    <div class="cards" id="asCards" style="margin-bottom:10px"></div>
+    <div class="panel"><table><thead><tr><th>Cabang</th><th>Nama</th><th>Jenis</th><th>Tgl beli</th><th class="num">Harga</th><th class="num">Umur</th><th class="num">Per bulan</th>
+      <th class="num">Sudah disusutkan</th><th class="num">Nilai sekarang</th><th class="num">Beban bulan ini</th><th>Status</th><th></th></tr></thead><tbody id="asBody"></tbody></table></div>
+  </div>
+
   <!-- PENGGUNA -->
   <div class="page hide" id="p-pengguna">
     <div class="bar"><span class="grow"></span><button class="primary" onclick="openUserModal()">+ Pengguna</button></div>
@@ -261,6 +279,22 @@
 </div>
 
 <!-- CUSTOMER MODAL -->
+<div class="overlay" id="assetModal"><div class="modal" style="width:560px">
+  <header><h3 id="amTitle">Aset</h3><button onclick="$('assetModal').classList.remove('open')">Tutup</button></header>
+  <div class="body">
+    <div class="field"><label>Nama</label><input id="amName"></div>
+    <div class="grid2"><div class="field"><label>Cabang</label><select id="amLoc"></select></div>
+      <div class="field"><label>Jenis</label><select id="amCat" onchange="if(!$('amLife').dataset.touched)$('amLife').value=(assetCats.find(c=>c.id==this.value)||{}).life_months||48"></select></div></div>
+    <div class="grid2"><div class="field"><label>Tanggal beli</label><input type="date" id="amDate"></div>
+      <div class="field"><label>Harga beli</label><input id="amCost" class="num" inputmode="numeric" oninput="this.value=this.value?num(parseRp(this.value)):'';amCalc()"></div></div>
+    <div class="grid2"><div class="field"><label>Umur (bulan)</label><input id="amLife" class="num" inputmode="numeric" oninput="this.dataset.touched=1;amCalc()"></div>
+      <div class="field"><label>Per bulan</label><div id="amPer" style="padding:8px 0;font-weight:600"></div></div></div>
+    <div class="field"><label>Catatan</label><input id="amNote"></div>
+    <div class="err" id="amErr"></div>
+  </div>
+  <footer><span id="amDispose" style="margin-right:auto"></span><button onclick="$('assetModal').classList.remove('open')">Batal</button><button class="primary" onclick="saveAsset()">Simpan</button></footer>
+</div></div>
+
 <div class="overlay" id="custModal">
   <div class="modal">
     <header><h3>Pelanggan</h3><button onclick="closeModal('custModal')">Tutup</button></header>
@@ -394,7 +428,7 @@ let cats = [], products = [], tiers = {}, stock = {}, lists = [], locations = []
 let defaultList = null, kind = "barang", showList = null, sortKey = "name", sortDir = 1;
 const todayJkt = () => new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Jakarta" });
 const closeModal = id => $(id).classList.remove("open");
-const TABS = ["mekanik", "persetujuan", "penjualan", "produk", "pembelian", "opname", "pelanggan", "tinjauan", "rekening", "pengguna"];
+const TABS = ["mekanik", "persetujuan", "penjualan", "produk", "pembelian", "opname", "pelanggan", "tinjauan", "rekening", "aset", "pengguna"];
 
 authGate(start, ["owner", "admin"]);
 
@@ -417,7 +451,7 @@ async function start() {
   arrowNav("saModal", () => adjRows, () => saCur?.id, showAdjustment);
 }
 
-const MORE = ["opname", "pelanggan", "rekening", "pengguna"];
+const MORE = ["opname", "pelanggan", "rekening", "aset", "pengguna"];
 document.addEventListener("click", () => $("moreMenu")?.classList.add("hide"));
 function tab(name) {
   TABS.forEach(n => { $("p-" + n).classList.toggle("hide", n !== name); $("t-" + n).classList.toggle("on", n === name); });
@@ -428,6 +462,7 @@ function tab(name) {
   if (name === "mekanik") loadMechanics();
   if (name === "pengguna") loadUsers();
   if (name === "rekening") loadBanks();
+  if (name === "aset") loadAssets();
   if (name === "pembelian") loadPurchases();
   if (name === "persetujuan") loadApprovals();
   if (name === "penjualan" && !salesRows) loadSales();
@@ -1278,6 +1313,60 @@ async function decideAdj(ok) {
   if (error) { toast(esc(error.message), "err"); return; }
   closeModal("saModal"); toast(ok ? "Disetujui — stok diperbarui." : "Ditolak.");
   await loadAll(); renderOpname(); loadAdjustments();
+}
+
+// ═══ ASET ═══
+let assetRows = [], assetCats = [], amId = null;
+async function loadAssets() {
+  if (!$("asMonth").value) $("asMonth").value = new Date().toLocaleDateString("sv-SE", { timeZone: "Asia/Jakarta" }).slice(0, 7);
+  if (!assetCats.length) { const { data } = await sb.from("expense_categories").select("*").eq("line", "aset").order("sort"); assetCats = data || []; }
+  const { data, error } = await sb.rpc("asset_list", { p_month: $("asMonth").value + "-01" });
+  if (error) { $("asBody").innerHTML = `<tr><td colspan="12" class="err">${esc(error.message)}</td></tr>`; return; }
+  assetRows = data; renderAssets();
+}
+function renderAssets() {
+  const m = $("asMonth").value + "-01", all = $("asAll").checked, own = ME.role === "owner";
+  const st = a => a.disposed_on && a.disposed_on < m ? "dilepas" : Number(a.taken) >= Number(a.cost) - 1 ? "habis" : a.bought_on.slice(0, 7) > m.slice(0, 7) ? "belum" : "aktif";
+  const R = assetRows.filter(a => all || st(a) === "aktif");
+  const sum = f => assetRows.reduce((t, a) => t + f(a), 0);
+  $("asCards").innerHTML = [["Beban penyusutan bulan ini", rp(sum(a => Number(a.charge))), "masuk laba rugi"],
+    ["Nilai aset sekarang", rp(sum(a => st(a) === "dilepas" ? 0 : Number(a.cost) - Number(a.taken))), "harga beli − sudah disusutkan"],
+    ["Aset aktif", assetRows.filter(a => st(a) === "aktif").length, "masih disusutkan"]]
+    .map(([l, v, s2]) => `<div class="kpi"><div class="l">${l}</div><div class="v">${v}</div><div class="s">${s2}</div></div>`).join("");
+  const lbl = { aktif: '<span class="badge b-paid">aktif</span>', habis: '<span class="badge">habis disusutkan</span>', dilepas: '<span class="badge b-void">dilepas</span>', belum: '<span class="badge">belum dibeli</span>' };
+  $("asBody").innerHTML = R.map(a => `<tr><td>${esc(a.branch)}</td><td>${esc(a.name)}${a.expense_doc ? `<div class="tiny muted">${esc(a.expense_doc)}</div>` : ""}${a.dispose_note ? `<div class="tiny muted">${esc(a.disposed_on)} · ${esc(a.dispose_note)}</div>` : ""}</td>
+    <td class="small">${esc((a.category || "").replace("Aset: ", ""))}</td><td class="small">${a.bought_on}</td><td class="num">${num(a.cost)}</td><td class="num">${a.life_months} bln</td>
+    <td class="num">${num(a.monthly)}</td><td class="num">${num(a.taken)}</td><td class="num"><b>${num(Number(a.cost) - Number(a.taken))}</b></td><td class="num">${Number(a.charge) ? num(a.charge) : "—"}</td>
+    <td>${lbl[st(a)]}<div class="tiny muted">s.d. ${a.ends_on}</div></td><td>${own ? `<button class="small" onclick="editAsset(${a.id})">Ubah</button>` : ""}</td></tr>`).join("")
+    || `<tr><td colspan="12" class="muted">Tidak ada aset aktif.</td></tr>`;
+}
+function editAsset(id) {
+  const a = assetRows.find(x => x.id === id) || {}; amId = id;
+  $("amTitle").textContent = id ? "Ubah aset" : "Aset lama (dibeli sebelum pakai sistem)";
+  $("amLoc").innerHTML = locations.map(l => `<option value="${l.id}" ${a.location_id === l.id ? "selected" : ""}>${esc(l.code)} · ${esc(l.name)}</option>`).join("");
+  $("amCat").innerHTML = assetCats.map(c => `<option value="${c.id}" ${a.category_id === c.id ? "selected" : ""}>${esc(c.name.replace("Aset: ", ""))} (${c.life_months} bln)</option>`).join("");
+  $("amName").value = a.name || ""; $("amDate").value = a.bought_on || ""; $("amCost").value = a.cost ? num(a.cost) : "";
+  $("amLife").value = a.life_months || (assetCats.find(c => c.id == $("amCat").value) || {}).life_months || 48; delete $("amLife").dataset.touched;
+  $("amNote").value = a.note || ""; $("amErr").textContent = "";
+  $("amDispose").innerHTML = !id ? "" : a.disposed_on ? `<button onclick="disposeAsset(${id}, true)">Batalkan pelepasan</button>` : `<button class="danger" onclick="disposeAsset(${id})">Dijual / rusak / hilang</button>`;
+  amCalc(); $("assetModal").classList.add("open");
+}
+function amCalc() { const c = parseRp($("amCost").value || ""), l = Number($("amLife").value); $("amPer").textContent = c && l ? rp(Math.round(c / l)) + " / bulan" : "—"; }
+async function saveAsset() {
+  const { error } = await sb.rpc("save_asset", { p_id: amId, p_location: Number($("amLoc").value), p_name: $("amName").value, p_category: Number($("amCat").value),
+    p_bought: $("amDate").value || null, p_cost: parseRp($("amCost").value || "") || null, p_life: Number($("amLife").value) || null, p_note: $("amNote").value });
+  if (error) { $("amErr").textContent = error.message; return; }
+  $("assetModal").classList.remove("open"); toast("Tersimpan."); loadAssets();
+}
+async function disposeAsset(id, undo) {
+  let day = null, note = null;
+  if (!undo) {
+    day = prompt("Tanggal dijual / rusak / hilang (YYYY-MM-DD):", new Date().toLocaleDateString("sv-SE", { timeZone: "Asia/Jakarta" })); if (!day) return;
+    note = prompt("Alasannya (mis. dijual Rp 500.000 / rusak / hilang):"); if (!note || !note.trim()) return;
+  }
+  const { error } = await sb.rpc("dispose_asset", { p_id: id, p_day: day, p_note: note });
+  if (error) { toast(esc(error.message), "err"); return; }
+  $("assetModal").classList.remove("open"); toast("Tersimpan."); loadAssets();
 }
 
 async function loadBanks() {

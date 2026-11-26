@@ -224,7 +224,8 @@
       <div class="field"><label>Jenis</label><select id="exKind" onchange="expKindChanged()">
         <option value="beban">Beban / biaya operasional</option><option value="koperasi_keluar">Koperasi: pinjaman ke karyawan</option>
         <option value="koperasi_masuk">Koperasi: cicilan dari karyawan (uang masuk)</option><option value="setor_cm">Setor laba ke Central Motor</option>
-        <option value="hutang_cm">Bayar hutang ke Central Motor</option><option value="prive">Diambil pemilik (prive)</option></select></div>
+        <option value="hutang_cm">Bayar hutang ke Central Motor</option><option value="prive">Diambil pemilik (prive)</option>
+        <option value="titipan_masuk">Dana titipan / salah transfer MASUK (bukan uang kita)</option><option value="titipan_keluar">Dana titipan / salah transfer DIKEMBALIKAN</option></select></div>
       <div class="field" id="exCatBox"><label>Kategori</label><select id="exCat"></select></div>
       <div class="field hide" id="exPersonBox"><label>Nama karyawan</label><input id="exPerson" style="text-transform:uppercase"></div>
       <div class="field"><label>Jumlah</label><input id="exAmt" class="num" inputmode="numeric" oninput="this.value=this.value?num(parseRp(this.value)):''"></div>
@@ -234,6 +235,7 @@
       <div class="field"><label id="exFromLbl">Dibayar dari</label><select id="exFrom"></select></div>
       <div class="field"><button class="primary" id="exSave" onclick="saveExp()">Simpan</button></div>
     </div>
+    <div class="small muted" id="exHint" style="margin-top:-4px;min-height:16px"></div>
     <div class="err" id="exErr"></div>
     <table style="margin-top:8px"><thead><tr><th>No</th><th>Jenis / kategori</th><th>Keterangan</th><th>Dari</th><th class="num">Jumlah</th><th>Oleh</th><th></th></tr></thead><tbody id="exBody"></tbody></table>
   </div>
@@ -1192,10 +1194,16 @@ async function reopenClose(id) {
 
 // ═══ PENGELUARAN ═══
 let expCats = null;
-const EXK = { beban: "Beban", koperasi_keluar: "Koperasi keluar", koperasi_masuk: "Koperasi masuk", setor_cm: "Setor laba ke CM", hutang_cm: "Bayar hutang CM", prive: "Prive" };
+const EXK = { beban: "Beban", koperasi_keluar: "Koperasi keluar", koperasi_masuk: "Koperasi masuk", setor_cm: "Setor laba ke CM", hutang_cm: "Bayar hutang CM", prive: "Prive", titipan_masuk: "Titipan masuk", titipan_keluar: "Titipan dikembalikan" };
+const EXHINT = { koperasi_keluar: "Kasbon / pinjaman karyawan. Bukan beban — nanti dipotong dari gaji.", koperasi_masuk: "Cicilan kasbon dari karyawan.",
+  setor_cm: "Setor laba ke Central Motor. Bukan beban.", hutang_cm: "Bayar hutang barang ke Central Motor. Bukan beban.", prive: "Uang diambil pemilik untuk pribadi. Bukan beban.",
+  titipan_masuk: "Uang masuk yang bukan milik toko: salah transfer, uang cabang lain (mis. oli bekas Sumenep masuk ke rekening Pamekasan).",
+  titipan_keluar: "Mengembalikan uang yang bukan milik toko: salah transfer, uang milik cabang lain. Bukan beban." };
 async function openExp() {
   if (!expCats) { const { data } = await sb.from("expense_categories").select("*").eq("is_active", true).order("sort").order("name"); expCats = data || []; }
-  $("exCat").innerHTML = `<option value="">— pilih —</option>` + expCats.map(c => `<option value="${c.id}">${esc(c.name)}</option>`).join("");
+  const gs = [...new Set(expCats.map(c => c.grp || ""))];
+  $("exCat").innerHTML = `<option value="">— pilih —</option>` + gs.map(g => `<optgroup label="${esc(g)}">${expCats.filter(c => (c.grp || "") === g).map(c => `<option value="${c.id}">${esc(c.name)}</option>`).join("")}</optgroup>`).join("");
+  $("exCat").onchange = expKindChanged;
   $("exFrom").innerHTML = payOptions("tunai").replace(/>Tunai</, ">Kas (tunai)<");
   $("exErr").textContent = ""; expKindChanged();
   $("expModal").classList.add("open"); loadExp();
@@ -1204,7 +1212,9 @@ function expKindChanged() {
   const k = $("exKind").value;
   $("exCatBox").classList.toggle("hide", k !== "beban");
   $("exPersonBox").classList.toggle("hide", !k.startsWith("koperasi"));
-  $("exFromLbl").textContent = k === "koperasi_masuk" ? "Diterima ke" : "Dibayar dari";
+  $("exFromLbl").textContent = k === "koperasi_masuk" || k === "titipan_masuk" ? "Diterima ke" : "Dibayar dari";
+  const c = (expCats || []).find(c => c.id === Number($("exCat").value));
+  $("exHint").textContent = k === "beban" ? (c ? c.hint || "" : "Bingung pilih kategori? Lihat panduan. Kalau benar-benar tidak ada yang cocok: Lain-lain.") : EXHINT[k] || "";
 }
 async function saveExp() {
   const k = $("exKind").value, amt = parseRp($("exAmt").value || ""), from = $("exFrom").value, err = $("exErr");
@@ -1226,10 +1236,10 @@ async function loadExp() {
   $("exBody").innerHTML = data.map(e => `<tr class="${e.cancelled_at ? "off" : ""}"><td class="small">${esc(e.doc_no)}</td>
     <td>${EXK[e.kind]}${e.expense_categories ? `<div class="tiny muted">${esc(e.expense_categories.name)}</div>` : ""}${e.person ? `<div class="tiny muted">${esc(e.person)}</div>` : ""}</td>
     <td class="small">${esc(e.description)}${e.cancelled_at ? `<div style="color:var(--red)">BATAL: ${esc(e.cancel_reason)}</div>` : ""}</td>
-    <td class="small">${e.paid_from === "tunai" ? "Kas" : esc(e.bank_accounts?.name || "")}</td><td class="num">${e.kind === "koperasi_masuk" ? "+" : ""}${num(e.amount)}</td>
+    <td class="small">${e.paid_from === "tunai" ? "Kas" : esc(e.bank_accounts?.name || "")}</td><td class="num">${e.kind === "koperasi_masuk" || e.kind === "titipan_masuk" ? "+" : ""}${num(e.amount)}</td>
     <td class="small">${esc(e.creator?.full_name || "")}</td>
     <td>${e.cancelled_at ? "" : `<button class="link small danger" onclick="cancelExp(${e.id},'${esc(e.doc_no)}')">batal</button>`}</td></tr>`).join("")
-    + (data.length ? `<tr><td colspan="4"><b>Total keluar hari ini</b> <span class="tiny muted">(tanpa koperasi masuk)</span></td><td class="num"><b>${num(sum(e => e.kind !== "koperasi_masuk"))}</b></td><td colspan="2"></td></tr>` : "")
+    + (data.length ? `<tr><td colspan="4"><b>Total keluar hari ini</b> <span class="tiny muted">(tanpa uang masuk)</span></td><td class="num"><b>${num(sum(e => e.kind !== "koperasi_masuk" && e.kind !== "titipan_masuk"))}</b></td><td colspan="2"></td></tr>` : "")
     || `<tr><td colspan="7" class="muted">Belum ada pengeluaran hari ini.</td></tr>`;
 }
 async function cancelExp(id, doc) {
