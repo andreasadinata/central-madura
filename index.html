@@ -121,6 +121,7 @@
     <button onclick="openTx()">Transaksi <span class="small muted">· belum lunas</span> <b id="pendingCount" style="color:var(--red)"></b></button>
     <button onclick="openDpList()">DP</button>
     <button onclick="openExp()">Pengeluaran</button>
+    <button onclick="openClose()">Tutup kasir</button>
     <span id="branchSw"></span>
     <a href="queue.html"><button>Antrian</button></a>
     <a id="adminLink" class="hide" href="admin.html"><button>Admin</button></a>
@@ -236,6 +237,14 @@
     <div class="err" id="exErr"></div>
     <table style="margin-top:8px"><thead><tr><th>No</th><th>Jenis / kategori</th><th>Keterangan</th><th>Dari</th><th class="num">Jumlah</th><th>Oleh</th><th></th></tr></thead><tbody id="exBody"></tbody></table>
   </div>
+</div></div>
+
+<!-- TUTUP KASIR -->
+<div class="overlay" id="closeModal"><div class="modal" style="width:980px">
+  <header><h3 id="clTitle">Tutup kasir</h3>
+    <div class="row"><input type="date" id="clDay" style="width:160px" onchange="loadClose()"><button onclick="closeModal('closeModal')">Tutup</button></div></header>
+  <div class="body" id="clBody" style="max-height:72vh;overflow:auto"></div>
+  <footer id="clFoot"></footer>
 </div></div>
 
 <!-- NEW CUSTOMER / VEHICLE -->
@@ -1106,6 +1115,79 @@ async function refundDp(i) {
   const { error } = await sb.rpc("refund_deposit", { p_id: d.id, p_method: bank ? "transfer" : "tunai", p_bank: bank ? bank.id : null, p_reason: why.trim() });
   if (error) { toast(esc(error.message), "err"); return; }
   toast(`${d.doc_no} dikembalikan.`); openDpList(); if (cust) setCustomer(cust, vehicleId > 0 ? vehicleId : null);
+}
+
+// ═══ TUTUP KASIR ═══
+let CL = null;
+function openClose() { $("clDay").value = todayJkt(); $("closeModal").classList.add("open"); loadClose(); }
+async function loadClose() {
+  $("clBody").innerHTML = `<p class="muted">Memuat…</p>`; $("clFoot").innerHTML = "";
+  const { data, error } = await sb.rpc("cash_day", { p_loc: ME.location_id, p_day: $("clDay").value });
+  if (error) { $("clBody").innerHTML = `<p class="err">${esc(error.message)}</p>`; return; }
+  CL = data;
+  const done = data.closing, first = !data.prev_day && !done;
+  $("clTitle").textContent = `Tutup kasir — ${data.branch} · ${data.day}${done ? " (SUDAH DITUTUP)" : ""}`;
+  const acc = done ? done.summary.accounts : data.accounts;
+  let h = done ? `<div class="notice ${Number(done.total_diff) ? "red" : ""}" style="margin-bottom:10px">Ditutup ${new Date(done.closed_at).toLocaleString("id-ID", { timeZone: "Asia/Jakarta" })} oleh ${esc(done.closer || "")}.
+      ${Number(done.total_diff) ? `Selisih ${num(done.total_diff)} — ${esc(done.note || "")}` : "Tidak ada selisih."}</div>`
+    : first ? `<div class="notice warn" style="margin-bottom:10px">Tutup kasir pertama di cabang ini: isi <b>saldo awal</b> (uang di laci & saldo bank saat buka hari ini). Hari-hari berikutnya saldo awal terisi otomatis.</div>`
+    : `<p class="small muted" style="margin-bottom:8px">Saldo awal = hasil hitung tutup kasir ${data.prev_day} (+ transaksi setelah jam tutup itu).</p>`;
+  h += `<table><thead><tr><th>Akun</th><th class="num">Saldo awal</th><th>Masuk / keluar hari ini</th><th class="num">Seharusnya</th><th class="num">Sebenarnya</th><th class="num">Selisih</th></tr></thead><tbody>`;
+  acc.forEach(a => {
+    const rec = a.reconcile, lines = a.lines.map(l => `<div class="row small" style="justify-content:space-between;gap:12px"><span>${esc(l.label)} <span class="muted">×${l.count}</span></span><span>${num(l.amount)}</span></div>`).join("") || '<span class="small muted">—</span>';
+    const act = done ? done.actual[a.key] : null, dif = done ? done.diff[a.key] : null;
+    h += `<tr><td><b>${esc(a.name)}</b>${rec ? "" : '<div class="tiny muted">rekening bersama: saldo tidak dicek</div>'}</td>
+      <td class="num">${a.opening == null ? (rec ? `<input class="num clOpen" data-k="${a.key}" style="width:130px" inputmode="numeric" placeholder="saldo awal" oninput="this.value=this.value?num(parseRp(this.value)):'';clCalc()">` : "0") : num(a.opening)}</td>
+      <td style="min-width:260px">${lines}<div class="row small" style="justify-content:space-between;border-top:1px solid var(--border);margin-top:4px;padding-top:4px"><b>Bersih</b><b>${num(a.net)}</b></div></td>
+      <td class="num"><b id="clExp_${a.key}">${a.expected == null ? "?" : num(a.expected)}</b></td>
+      <td class="num">${done ? (rec ? num(act) : "—") : rec ? `<input class="num clAct" data-k="${a.key}" style="width:130px" inputmode="numeric" placeholder="${a.key === "kas" ? "hitung uang" : "saldo mutasi"}" oninput="this.value=this.value?num(parseRp(this.value)):'';clCalc()">` : "—"}</td>
+      <td class="num" id="clDif_${a.key}">${done && rec ? `<b style="color:${Number(dif) ? "var(--red)" : "var(--green)"}">${num(dif)}</b>` : ""}</td></tr>`;
+  });
+  h += `</tbody></table>`;
+  if (Number(data.unpaid)) h += `<p class="small" style="margin-top:8px">Invoice hari ini yang belum lunas (piutang / sisa DP): <b>${num(data.unpaid)}</b> — tidak masuk kas.</p>`;
+  if (!done) h += `<div class="row" style="margin-top:14px;gap:8px;flex-wrap:wrap;align-items:end;border-top:1px solid var(--border);padding-top:12px">
+      <b class="small" style="width:100%">Setor tunai ke bank / tarik tunai</b>
+      <select id="trKind" style="width:170px"><option value="setor_bank">Setor tunai ke bank</option><option value="tarik_tunai">Tarik tunai dari bank</option></select>
+      <select id="trBank" style="width:200px">${banks.map(b => `<option value="${b.id}">${esc(b.name)}</option>`).join("")}</select>
+      <input id="trAmt" class="num" style="width:140px" placeholder="jumlah" inputmode="numeric" oninput="this.value=this.value?num(parseRp(this.value)):''">
+      <input id="trNote" style="width:180px" placeholder="keterangan">
+      <button onclick="addTransfer()">+ Catat</button></div>
+    <div class="field" style="margin-top:12px"><label>Catatan / penjelasan selisih</label><input id="clNote"></div>`;
+  $("clBody").innerHTML = h;
+  $("clFoot").innerHTML = done
+    ? (ME.role === "owner" ? `<button class="danger" onclick="reopenClose(${done.id})">Buka lagi (owner)</button>` : "") + `<button onclick="closeModal('closeModal')">Tutup</button>`
+    : `<span class="small muted" style="margin-right:auto">Setelah ditutup, pengeluaran & setoran tanggal ini terkunci.</span><button onclick="closeModal('closeModal')">Batal</button><button class="go" onclick="saveClose()">Simpan tutup kasir</button>`;
+  clCalc();
+}
+function clCalc() {
+  if (!CL || CL.closing) return;
+  CL.accounts.forEach(a => {
+    const o = a.opening != null ? Number(a.opening) : (document.querySelector(`.clOpen[data-k="${a.key}"]`) ? parseRp(document.querySelector(`.clOpen[data-k="${a.key}"]`).value || "") : 0);
+    const ex = o + Number(a.net), ai = document.querySelector(`.clAct[data-k="${a.key}"]`);
+    $("clExp_" + a.key).textContent = num(ex);
+    if (ai && ai.value) { const d = parseRp(ai.value) - ex; $("clDif_" + a.key).innerHTML = `<b style="color:${d ? "var(--red)" : "var(--green)"}">${num(d)}</b>`; }
+    else if ($("clDif_" + a.key)) $("clDif_" + a.key).textContent = "";
+  });
+}
+async function saveClose() {
+  const op = {}, ac = {};
+  document.querySelectorAll(".clOpen").forEach(i => { if (i.value) op[i.dataset.k] = parseRp(i.value); });
+  document.querySelectorAll(".clAct").forEach(i => { if (i.value !== "") ac[i.dataset.k] = parseRp(i.value); });
+  const { error } = await sb.rpc("close_cash_day", { p_day: $("clDay").value, p_opening: op, p_actual: ac, p_note: $("clNote").value.trim() || null });
+  if (error) { toast(esc(error.message), "err", 6000); return; }
+  toast("Tutup kasir tersimpan."); loadClose();
+}
+async function addTransfer() {
+  const amt = parseRp($("trAmt").value || "");
+  const { data, error } = await sb.rpc("add_cash_transfer", { p_day: $("clDay").value, p_kind: $("trKind").value, p_bank: Number($("trBank").value), p_amount: amt || null, p_note: $("trNote").value.trim() || null });
+  if (error) { toast(esc(error.message), "err"); return; }
+  toast(`${data.doc_no} tercatat.`); loadClose();
+}
+async function reopenClose(id) {
+  const why = prompt("Buka lagi tutup kasir ini? Alasan (wajib):"); if (!why || !why.trim()) return;
+  const { error } = await sb.rpc("reopen_cash_day", { p_id: id, p_reason: why.trim() });
+  if (error) { toast(esc(error.message), "err"); return; }
+  toast("Dibuka lagi."); loadClose();
 }
 
 // ═══ PENGELUARAN ═══

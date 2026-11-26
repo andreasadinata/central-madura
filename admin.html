@@ -208,7 +208,7 @@
   <div class="page hide" id="p-rekening">
     <div class="bar"><span class="small muted">Rekening yang muncul di kasir saat pelanggan bayar transfer. Nonaktifkan yang tidak dipakai (tidak dihapus, karena dipakai di pembayaran lama).</span>
       <span class="grow"></span><button class="primary" onclick="newBank()">+ Rekening</button></div>
-    <div class="panel"><table><thead><tr><th>Nama (mis. "BCA 123-456 a/n Andreas")</th><th>Status</th></tr></thead><tbody id="btable"></tbody></table></div>
+    <div class="panel"><table><thead><tr><th>Nama (mis. "BCA 123-456 a/n Andreas")</th><th>Milik cabang <span class="tiny muted">(cabang itu cek saldonya saat tutup kasir)</span></th><th>Status</th></tr></thead><tbody id="btable"></tbody></table></div>
   </div>
 
   <!-- PENGGUNA -->
@@ -1282,9 +1282,10 @@ async function decideAdj(ok) {
 
 async function loadBanks() {
   const { data, error } = await sb.from("bank_accounts").select("*").order("id");
-  if (error) { $("btable").innerHTML = `<tr><td colspan="2" class="err">${esc(error.message)}</td></tr>`; return; }
+  if (error) { $("btable").innerHTML = `<tr><td colspan="3" class="err">${esc(error.message)}</td></tr>`; return; }
   $("btable").innerHTML = data.map(b => `<tr class="${b.is_active ? "" : "off"}">
     <td><input value="${esc(b.name)}" onchange="updBank(${b.id},{name:this.value.trim()})"></td>
+    <td><select onchange="updBank(${b.id},{location_id:Number(this.value)||null})"><option value="">Semua cabang (tidak dicek saldo)</option>${locations.map(l => `<option value="${l.id}" ${b.location_id === l.id ? "selected" : ""}>${esc(l.code)} · ${esc(l.name)}</option>`).join("")}</select></td>
     <td><select onchange="updBank(${b.id},{is_active:this.value==='1'})"><option value="1" ${b.is_active ? "selected" : ""}>Aktif</option><option value="0" ${b.is_active ? "" : "selected"}>Nonaktif</option></select></td></tr>`).join("");
 }
 async function updBank(id, patch) {

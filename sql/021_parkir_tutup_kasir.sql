@@ -1,0 +1,6 @@
+-- v17 + v17b (2026-11-26): queue status 'Parked' (q_park / q_resume), leftovers parked automatically at day change
+--   (mechanics' time ends at the branch's last queue activity that day), parked cars stay on board + cashier strip,
+--   invoice made for a Serving/Parked car -> Done (q_link_sale); paid-trigger removed; q_done/q_cancel accept Parked.
+-- v18_tutup_kasir: bank_accounts.location_id; cash_transfers (setor tunai / tarik tunai); cash_closings (one closed per branch+day);
+--   _cash_moves() = all money movements (payments tunai/transfer, DP in/out, expenses, transfers); cash_day(); close_cash_day();
+--   reopen_cash_day() owner; expenses/transfers locked on closed days; Tinjauan: selisih, belum tutup kasir, dibuka lagi.

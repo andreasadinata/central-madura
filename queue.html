@@ -34,6 +34,7 @@
   .st-Done{background:var(--green-soft);color:var(--green)}
   .st-Cancelled{background:var(--red-soft);color:var(--red)}
   .st-Paused{background:var(--warn-bg);color:var(--warn-text)}
+  .st-Parked{background:#ede9fe;color:#5b21b6}
   tr.dim td{opacity:.45}
   .late{color:var(--red);font-weight:700}
   .pick{display:flex;flex-direction:column;gap:8px;max-height:330px;overflow:auto}
@@ -314,9 +315,10 @@ function renderLanes() {
     if (!rows.length) { $(el).innerHTML = `<tr><td colspan="7" class="muted">Belum ada mobil.</td></tr>`; continue; }
     const waiting = rows.filter(t => t.status === "Waiting");
     $(el).innerHTML = rows.map(t => {
-      const paused = !!t.paused_since;
+      const paused = !!t.paused_since, old = t.day !== B.today;
       const stKey = paused ? "Paused" : t.status;
-      const stTxt = paused ? "Beli barang · " + dur(mins(t.paused_since)) : { Waiting: "Menunggu", Serving: "Dikerjakan", Done: "Selesai", Cancelled: "Batal", Unfinished: "Belum selesai" }[t.status];
+      const stTxt = paused ? "Beli barang · " + dur(mins(t.paused_since)) : t.status === "Parked" ? "Parkir · " + esc(t.parked_reason || "")
+        : { Waiting: "Menunggu", Serving: "Dikerjakan", Done: "Selesai", Cancelled: "Batal", Unfinished: "Belum selesai" }[t.status];
       const wait = t.status === "Waiting" ? mins(t.created_at) : t.taken_at ? mins(t.created_at, t.taken_at) : null;
       const work = t.taken_at ? Math.max(0, mins(t.taken_at, t.done_at) - Math.round(t.paused_min)) : null;
       let act = "";
@@ -329,11 +331,16 @@ function renderLanes() {
         act = `<button class="sm go" onclick="done(${t.id})">✓ Selesai</button>
           <button class="sm" onclick="pause(${t.id},${!paused})">${paused ? "▶ Lanjut" : "🛒 Beli barang"}</button>
           <button class="sm" onclick="openTake(${t.id},true)">✎ Mekanik</button>
+          <button class="sm" onclick="park(${t.id})" title="Belum selesai: tunggu part / lanjut besok. Mekanik dilepas.">⏸ Parkir</button>
+          <button class="sm danger" onclick="openCancel(${t.id})">✕</button>`;
+      } else if (t.status === "Parked") {
+        act = `<button class="sm primary" onclick="openTake(${t.id},false)">▶ Lanjutkan</button>
+          <button class="sm go" onclick="done(${t.id})">✓ Selesai</button>
           <button class="sm danger" onclick="openCancel(${t.id})">✕</button>`;
       } else if (t.status === "Cancelled") act = `<span class="tiny muted">${esc(t.cancel_reason || "")}</span>`;
       else if (t.invoice) act = `<span class="tiny muted">${esc(t.invoice)}</span>`;
       return `<tr class="${["Done", "Cancelled"].includes(t.status) ? "dim" : ""}">
-        <td><b>${esc(t.code)}</b>${t.reserved ? `<div class="tiny" style="color:var(--accent)">🔒 ${esc(t.reserved)}</div>` : ""}</td>
+        <td><b>${esc(t.code)}</b>${old ? `<div class="tiny" style="color:#5b21b6">dari ${t.day.slice(8, 10)}/${t.day.slice(5, 7)}</div>` : ""}${t.reserved ? `<div class="tiny" style="color:var(--accent)">🔒 ${esc(t.reserved)}</div>` : ""}</td>
         <td><span style="letter-spacing:.04em">${esc(t.plate)}</span>
           ${t.customer ? `<div class="tiny">${esc(t.customer)}${t.car ? ` <span class="muted">· ${esc(t.car)}</span>` : ""}</div>` : ""}
           ${t.incomplete && t.status !== "Cancelled" ? `<div><button class="link tiny" style="color:var(--red)" onclick="openCust(${t.id})">⚠ data belum lengkap — lengkapi</button></div>` : ""}</td>
@@ -458,6 +465,12 @@ async function deleteLast() {
 }
 async function done(id) { await call("q_done", { p_ticket: id }); }
 async function pause(id, on) { await call("q_pause", { p_ticket: id, p_on: on }); }
+async function park(id) {
+  const t = B.tickets.find(x => x.id === id);
+  const why = prompt(`Parkir ${t.code} · ${t.plate}?\nMekanik dilepas (waktu kerjanya dihitung sampai sekarang). Mobil tetap ada di daftar sampai "Lanjutkan" / Selesai / invoice dibuat.\n\nAlasan:`, "tunggu part");
+  if (!why || !why.trim()) return;
+  await call("q_park", { p_ticket: id, p_reason: why.trim() }, `${t.code} diparkir.`);
+}
 
 function openCancel(id) {
   const t = B.tickets.find(x => x.id === id); cnId = id;
@@ -473,7 +486,7 @@ async function submitCancel() {
 
 function openTake(id, edit) {
   tk = B.tickets.find(x => x.id === id); tkEdit = edit;
-  $("tkTitle").textContent = edit ? "Ubah mekanik" : "Pilih mekanik";
+  $("tkTitle").textContent = edit ? "Ubah mekanik" : tk.status === "Parked" ? "Lanjutkan — pilih mekanik" : "Pilih mekanik";
   $("tkCode").textContent = tk.code; $("tkPlate").textContent = tk.plate;
   $("tkRes").innerHTML = tk.reserved ? ` · <span style="color:var(--accent)">🔒 diminta: ${esc(tk.reserved)}</span>` : "";
   const on = edit ? tk.mechanics.map(m => m.id) : (tk.reserved_id ? [tk.reserved_id] : []);
@@ -506,7 +519,7 @@ async function confirmTake() {
 async function doTake(ids) {
   const flagged = ids.filter(id => !(tkEdit && tk.mechanics.some(m => m.id === id))).map(id => unexplained(id)[0]).find(Boolean);
   if (flagged) { askReason(flagged.id, () => doTake(ids)); return; }
-  await call(tkEdit ? "q_edit_mechs" : "q_take", { p_ticket: tk.id, p_mechs: ids });
+  await call(tkEdit ? "q_edit_mechs" : tk.status === "Parked" ? "q_resume" : "q_take", { p_ticket: tk.id, p_mechs: ids });
 }
 
 document.addEventListener("keydown", e => { if (e.key === "Escape") document.querySelectorAll(".overlay.open").forEach(o => o.classList.remove("open")); });
