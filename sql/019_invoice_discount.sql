@@ -1,0 +1,6 @@
+-- v14_invoice_discount (applied 2026-11-26)
+-- sales.discount_amount / discount_note: Rp off the whole invoice, any staff, no approval; total = subtotal - discount (_recalc).
+-- set_sale_discount(sale, amount, note): same-day rule, cannot exceed subtotal or push total below what's already paid; audited.
+-- create_sale_q(... , p_discount, p_discount_note). sale_summary.discount = line cuts + invoice discount.
+-- report_sales_lines: + invoice_discount (spread over lines by share of subtotal). review_discounts(): Tinjauan "Diskon invoice".
+-- _apply_cost: a purchase fills in HPP of earlier sales of that product+branch that had none (DP / goods ordered from Surabaya).

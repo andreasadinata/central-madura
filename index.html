@@ -232,7 +232,8 @@ const cartHasService = () => cart.some(l => byId[l.pid]?.is_service);
 let sale = null;            // loaded saved invoice (null = new invoice)
 let cart = [];              // lines not yet saved: {pid, qty, price, reason, manual}
 let editing = -1;           // index of cart line being edited
-let method = "bayar", printFmt = "invoice";   // method: "bayar" (pay now) | "tempo"
+let method = "bayar", printFmt = "invoice";
+let discount = 0, discountNote = "";   // invoice discount (Rp) for a new invoice: no approval, listed in Tinjauan   // method: "bayar" (pay now) | "tempo"
 let banks = [];
 let busy = false;
 
@@ -579,6 +580,17 @@ async function loadSale(id) {
   return data;
 }
 
+async function editDiscount() {
+  const v = prompt(`Diskon untuk ${sale.invoice_no} (Rp, subtotal ${num(sale.subtotal)}). Kosongkan / 0 = tanpa diskon:`, sale.discount_amount ? num(sale.discount_amount) : "");
+  if (v === null) return;
+  const note = Number(parseRp(v) || 0) > 0 ? prompt("Keterangan diskon (opsional):", sale.discount_note || "") : "";
+  guard(async () => {
+    const { error } = await sb.rpc("set_sale_discount", { p_sale: sale.id, p_amount: parseRp(v) || 0, p_note: note || null });
+    if (error) throw error;
+    sale = await loadSale(sale.id); payLines = []; payDue = null; renderAll(); toast("Diskon disimpan.");
+  });
+}
+
 async function openSale(id) {
   try { sale = await loadSale(id); } catch (e) { toast("Gagal membuka invoice: " + esc(errText(e)), "err"); return; }
   cart = []; editing = -1;
@@ -625,7 +637,7 @@ async function pickQueueCar(id) {
 }
 
 function newInvoice() {
-  sale = null; cart = []; editing = -1; method = "bayar"; payLines = []; payDue = null; qTicket = null; qAutoVeh = null;
+  sale = null; cart = []; editing = -1; method = "bayar"; payLines = []; payDue = null; qTicket = null; qAutoVeh = null; discount = 0; discountNote = "";
   setCustomer(null);
   $("q").value = ""; renderGrid();
 }
@@ -691,7 +703,14 @@ function renderFoot() {
   const segPrint = `<div class="seg2"><button class="${printFmt === "invoice" ? "on" : ""}" onclick="printFmt='invoice';renderFoot()">Invoice besar</button><button class="${printFmt === "small" ? "on" : ""}" onclick="printFmt='small';renderFoot()">Nota kecil</button></div>`;
 
   if (!sale) {
-    const tot = cartTotal();
+    const sub = cartTotal();
+    if (discount > sub) discount = sub;
+    const tot = sub - discount;
+    if (cart.length) h += `<div class="sum"><span>Subtotal</span><span>${num(sub)}</span></div>
+      <div class="row" style="margin:4px 0 8px;gap:6px"><label style="margin:0;width:70px">Diskon</label>
+        <input id="discIn" class="num" style="flex:1" inputmode="numeric" placeholder="0" value="${discount ? num(discount) : ""}"
+          oninput="this.value=this.value?num(parseRp(this.value)):''" onchange="discount=parseRp(this.value)||0;renderFoot()">
+        <input style="flex:1.3" placeholder="keterangan (opsional)" value="${esc(discountNote)}" oninput="discountNote=this.value"></div>`;
     h += `<div class="total"><span>Total</span><b>${rp(tot)}</b></div>`;
     if (tempoOK) h += `<div class="seg2"><button class="${method === "bayar" ? "on" : ""}" onclick="method='bayar';renderFoot()">Bayar sekarang</button><button class="${method === "tempo" ? "on" : ""}" onclick="method='tempo';renderFoot()">Tempo</button></div>`;
     if (method !== "tempo" && tot > 0) h += payBlock(tot);
@@ -714,6 +733,10 @@ function renderFoot() {
     h += `<div class="sum"><span>${badge} · ${invDate(sale)} · ${esc(sale.cashier?.full_name || "")}</span></div>`;
     if (sale.business_date !== todayJkt() && ME.role === "owner" && sale.status !== "void") h += `<div class="notice warn">Invoice tanggal ${sale.business_date}. Anda owner: perubahan tetap bisa, dan tercatat.</div>`;
     sale.payments.forEach(p => h += `<div class="sum"><span>${payLabel(p)} · ${fmtDT(p.created_at)}</span><span>${num(p.amount)}</span></div>`);
+    const dsc = Number(sale.discount_amount || 0);
+    if (dsc || (canEdit() && sale.status !== "void")) h += `<div class="sum"><span>Subtotal</span><span>${num(sale.subtotal)}</span></div>
+      <div class="sum"><span>Diskon${sale.discount_note ? ` <span class="muted">(${esc(sale.discount_note)})</span>` : ""}
+        ${canEdit() && sale.status !== "void" && !cart.length ? `<button class="link small" onclick="editDiscount()">ubah</button>` : ""}</span><span>${dsc ? "−" + num(dsc) : "0"}</span></div>`;
     h += `<div class="total"><span>Total</span><b>${rp(tot)}</b></div>`;
     if (sale.status !== "void" && paid) h += `<div class="sum"><span>Sisa</span><span style="font-weight:700;color:${sisa > 0 ? "var(--red)" : "inherit"}">${num(Math.max(sisa, 0))}</span></div>`;
 
@@ -792,7 +815,8 @@ function saveNew(payAndPrint) {
   guard(async () => {
     const pay = method === "tempo" ? [] : payPayload();
     const args = { p_customer: cust.id, p_vehicle: vehicleId === NO_CAR ? null : vehicleId, p_plate: null,
-      p_items: itemsPayload(), p_tempo: method === "tempo", p_ticket: qTicket, p_no_queue_reason: null };
+      p_items: itemsPayload(), p_tempo: method === "tempo", p_ticket: qTicket, p_no_queue_reason: null,
+      p_discount: Math.min(discount, cartTotal()), p_discount_note: discountNote.trim() || null };
     let { data: s, error } = await sb.rpc("create_sale_q", args);
     // jasa without a queue car: the database asks for a reason (or pick the car from the Antrian strip)
     if (error && /pilih mobilnya dari Antrian/.test(error.message)) {
@@ -974,7 +998,8 @@ function printInvoice(s) {
     </table>
     <div class="p-hr"></div>
     <table><tr><td style="width:55%">${s.status === "void" ? "" : ""}<span class="p-stamp">${stampText(s)}</span></td><td>
-      <table><tr><td>TOTAL</td><td class="p-r"><b>${num(s.total)}</b></td></tr>
+      <table>${Number(s.discount_amount) ? `<tr><td>SUBTOTAL</td><td class="p-r">${num(s.subtotal)}</td></tr><tr><td>DISKON</td><td class="p-r">-${num(s.discount_amount)}</td></tr>` : ""}
+      <tr><td>TOTAL</td><td class="p-r"><b>${num(s.total)}</b></td></tr>
       ${s.payments.map(p => `<tr><td>${payLabel(p).replace("Dibayar · ", "")} ${new Date(p.created_at).toLocaleDateString("id-ID",{timeZone:"Asia/Jakarta"})}</td><td class="p-r">${num(p.amount)}</td></tr>`).join("")}
       ${s.status !== "void" && s.payments.length ? `<tr><td><b>SISA</b></td><td class="p-r"><b>${num(Math.max(sisa, 0))}</b></td></tr>` : ""}
       </table></td></tr></table>
@@ -994,7 +1019,8 @@ function printSmall(s) {
     <div class="p-hr"></div>
     <table>${items.map(it => `<tr><td colspan="2">${esc(it.products.name)}</td></tr><tr><td>&nbsp; ${num(it.qty)} x ${num(it.unit_price)}</td><td class="p-r">${num(it.line_total)}</td></tr>`).join("")}</table>
     <div class="p-hr"></div>
-    <table><tr><td><b>TOTAL</b></td><td class="p-r"><b>${num(s.total)}</b></td></tr>
+    <table>${Number(s.discount_amount) ? `<tr><td>Subtotal</td><td class="p-r">${num(s.subtotal)}</td></tr><tr><td>Diskon</td><td class="p-r">-${num(s.discount_amount)}</td></tr>` : ""}
+    <tr><td><b>TOTAL</b></td><td class="p-r"><b>${num(s.total)}</b></td></tr>
     ${s.payments.map(p => `<tr><td>${payLabel(p).replace("Dibayar · ", "")}</td><td class="p-r">${num(p.amount)}</td></tr>`).join("")}
     ${s.status !== "void" && s.payments.length ? `<tr><td>SISA</td><td class="p-r">${num(Math.max(sisa, 0))}</td></tr>` : ""}</table>
     <div style="text-align:center;margin-top:6px"><b>${stampText(s)}</b><br>Terima kasih</div>
