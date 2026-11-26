@@ -300,7 +300,7 @@
         <div class="field"><label>Peran</label><select id="umRole"><option value="kasir">Kasir</option><option value="admin">Admin</option><option value="owner">Owner</option></select></div>
         <div class="field"><label>Cabang</label><select id="umLoc"></select></div>
       </div>
-      <p class="small muted">Kasir: jual, batal item & void (tercatat). Admin: + ubah produk, harga, pelanggan. Owner: + kelola pengguna.</p>
+      <p class="small muted">Kasir: jual, diskon invoice, batal item & void (semua tercatat); tidak bisa lihat harga beli. Admin: + pembelian, stok opname, pelanggan, mekanik, laporan, lihat harga beli. Owner: + ubah produk & harga, setujui, kelola pengguna. Email boleh karangan (mis. mei@centralban.id).</p>
       <div class="err" id="umErr"></div>
     </div>
     <footer><button onclick="closeModal('userModal')">Batal</button><button class="primary" id="umSave" onclick="createUser()">Buat akun</button></footer>

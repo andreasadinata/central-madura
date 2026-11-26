@@ -22,8 +22,10 @@ Deno.serve(async (req) => {
   const token = (req.headers.get("Authorization") || "").replace("Bearer ", "");
   const { data: { user }, error: uErr } = await admin.auth.getUser(token);
   if (uErr || !user) return reply(401, { error: "Belum login atau sesi habis. Login ulang." });
-  const { data: caller } = await admin.from("profiles").select("role,is_active").eq("id", user.id).maybeSingle();
-  if (!caller || !caller.is_active || caller.role !== "owner") {
+  const { data: caller, error: pErr } = await admin.from("profiles").select("role,is_active").eq("id", user.id).maybeSingle();
+  if (pErr) return reply(500, { error: "Gagal membaca profil pemanggil: " + pErr.message });
+  if (!caller) return reply(403, { error: "Akun ini tidak punya profil staf." });
+  if (!caller.is_active || caller.role !== "owner") {
     return reply(403, { error: "Hanya owner yang boleh mengelola akun." });
   }
 
@@ -33,18 +35,19 @@ Deno.serve(async (req) => {
   if (body.action === "create") {
     const { email, password, full_name, role, location_id } = body;
     if (!email || !password || !full_name || !role) return reply(400, { error: "Nama, email, password, peran wajib diisi." });
+    if (!email.includes("@")) return reply(400, { error: `"${email}" bukan alamat email. Contoh: mei@centralban.id (tidak harus email asli).` });
     if (!["admin", "kasir", "owner"].includes(role)) return reply(400, { error: `Peran "${role}" tidak dikenal.` });
     if (password.length < 8) return reply(400, { error: "Password minimal 8 karakter." });
 
     const { data: created, error: cErr } = await admin.auth.admin.createUser({ email, password, email_confirm: true });
     if (cErr) return reply(400, { error: "Gagal membuat login: " + cErr.message });
 
-    const { error: pErr } = await admin.from("profiles").insert({
+    const { error: iErr } = await admin.from("profiles").insert({
       id: created.user.id, full_name, email, role, location_id: location_id ? Number(location_id) : null,
     });
-    if (pErr) {
+    if (iErr) {
       await admin.auth.admin.deleteUser(created.user.id); // undo half-made account
-      return reply(400, { error: "Login dibuat tapi profil gagal, login dibatalkan: " + pErr.message });
+      return reply(400, { error: "Login dibuat tapi profil gagal, login dibatalkan: " + iErr.message });
     }
     await admin.from("audit_log").insert({ user_id: user.id, action: "user_create", table_name: "profiles",
       detail: { email, full_name, role, location_id } });
