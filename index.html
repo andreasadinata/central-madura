@@ -299,6 +299,7 @@ let banks = [];
 let busy = false;
 
 const todayJkt = () => new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Jakarta" });
+const addDays = (d, n) => { const x = new Date(d + "T12:00:00Z"); x.setUTCDate(x.getUTCDate() + n); return x.toISOString().slice(0, 10); };
 const fmtDT = d => new Date(d).toLocaleString("id-ID", { timeZone: "Asia/Jakarta", day:"2-digit", month:"2-digit", year:"numeric", hour:"2-digit", minute:"2-digit" });
 
 authGate(start);
@@ -825,7 +826,7 @@ function renderFoot() {
     } else {
       if (over > 0) {
         h += `<div class="notice red">Lebih bayar ${rp(over)} — harus dikembalikan ke pelanggan.</div>`;
-        h += `<div class="payrow"><div><label>Dikembalikan lewat</label><select id="refundM">${payOptions("tunai")}</select></div>
+        h += `<div class="payrow"><div><label>Dikembalikan lewat</label><select id="refundM">${payOptions("tunai", true)}</select></div>
               <div style="align-self:end"><button class="primary" style="width:100%" onclick="refund(${over})">Kembalikan ${rp(over)}</button></div></div>`;
       } else if (sisa > 0) {
         h += dpBlock();
@@ -849,12 +850,18 @@ function renderFoot() {
 // ── Payment lines: several ways to pay one invoice (e.g. transfer 2.000.000 + tunai 475.000).
 //    Received more than due → the difference is given back in cash and recorded as "kembalian".
 let payLines = [], payDue = null;
-const payOptions = sel => `<option value="tunai" ${sel === "tunai" ? "selected" : ""}>Tunai</option>` +
-  banks.map(b => `<option value="tf:${b.id}" ${sel === "tf:" + b.id ? "selected" : ""}>Transfer ${esc(b.name)}</option>`).join("");
+// value "tunai" | "tf:<bank>" | "edc:<bank>" | "qris:<bank>"; card/QRIS only for banks ticked in Admin → Rekening bank
+const payOptions = (sel, noCard) => `<option value="tunai" ${sel === "tunai" ? "selected" : ""}>Tunai</option>` +
+  banks.map(b => `<option value="tf:${b.id}" ${sel === "tf:" + b.id ? "selected" : ""}>Transfer ${esc(b.name)}</option>`).join("") +
+  (noCard ? "" : banks.filter(b => b.has_edc).map(b => `<option value="edc:${b.id}" ${sel === "edc:" + b.id ? "selected" : ""}>EDC kartu ${esc(b.name)}</option>`).join("") +
+    banks.filter(b => b.has_qris).map(b => `<option value="qris:${b.id}" ${sel === "qris:" + b.id ? "selected" : ""}>QRIS ${esc(b.name)}</option>`).join(""));
+const payOf = v => { if (v === "tunai") return { method: "tunai", bank: null }; const [k, id] = v.split(":"); return { method: k === "tf" ? "transfer" : k, bank: Number(id) }; };
+const METHOD_TXT = { transfer: "Transfer", edc: "EDC kartu", qris: "QRIS" };
+const howPaid = (m, bankName) => m === "tunai" ? "Tunai" : (METHOD_TXT[m] || m) + " " + (bankName || "");
 function payLabel(p) {
   if (p.is_change) return "Kembalian tunai";
   if (p.method === "dp") return (p.amount < 0 ? "DP dibuka lagi · " : "DP · ") + (p.customer_deposits?.doc_no || "");
-  const how = p.method === "transfer" ? "Transfer " + (p.bank_accounts?.name || "") : "Tunai";
+  const how = howPaid(p.method, p.bank_accounts?.name);
   return (p.amount < 0 ? "Dikembalikan · " : "Dibayar · ") + how;
 }
 // open DPs of this customer, ticked = used as payment now
@@ -889,7 +896,7 @@ function payRecalc() {
 }
 const payPayload = () => [...deps.filter(d => useDep.has(d.id)).map(d => ({ method: "dp", deposit_id: d.id, amount: Number(d.amount) })),
   ...(document.getElementById("paySum") ? payLines.filter(l => l.amt > 0).map(l => l.m === "tunai"
-    ? { method: "tunai", amount: l.amt } : { method: "transfer", bank_account_id: Number(l.m.slice(3)), amount: l.amt }) : [])];
+    ? { method: "tunai", amount: l.amt } : { method: payOf(l.m).method, bank_account_id: payOf(l.m).bank, amount: l.amt }) : [])];
 
 // ═══════════════════════ ACTIONS ═══════════════════════
 const itemsPayload = () => cart.map(l => ({ product_id: l.pid, qty: l.qty, unit_price: l.price, reason: l.reason.trim() }));
@@ -1072,8 +1079,7 @@ async function saveDp() {
   if (!amt) { $("dpErr").textContent = "Isi jumlah DP."; return; }
   if (!note) { $("dpErr").textContent = "Tulis DP untuk apa."; return; }
   $("dpSave").disabled = true;
-  const { data, error } = await sb.rpc("create_deposit", { p_customer: cust.id, p_amount: amt, p_method: m === "tunai" ? "tunai" : "transfer",
-    p_bank: m === "tunai" ? null : Number(m.slice(3)), p_note: note });
+  const { data, error } = await sb.rpc("create_deposit", { p_customer: cust.id, p_amount: amt, p_method: payOf(m).method, p_bank: payOf(m).bank, p_note: note });
   $("dpSave").disabled = false;
   if (error) { $("dpErr").textContent = error.message; return; }
   closeModal("dpModal"); toast(`${data.doc_no} · DP ${rp(data.amount)} tersimpan.`);
@@ -1081,7 +1087,7 @@ async function saveDp() {
   await setCustomer(cust, vehicleId > 0 ? vehicleId : null);
 }
 function printDeposit(d, c) {
-  const L = ME.locations, how = d.method === "transfer" ? "Transfer " + ((banks.find(b => b.id === d.bank_account_id) || {}).name || "") : "Tunai";
+  const L = ME.locations, how = howPaid(d.method, (banks.find(b => b.id === d.bank_account_id) || {}).name);
   const when = new Date(d.created_at).toLocaleString("id-ID", { timeZone: "Asia/Jakarta" });
   $("print").innerHTML = printFmt === "small"
     ? `<div class="p-small"><div style="text-align:center"><b>${esc(L.name.toUpperCase())}</b><br>KWITANSI UANG MUKA</div><div class="p-hr"></div>
@@ -1147,6 +1153,7 @@ async function loadClose() {
   });
   h += `</tbody></table>`;
   if (Number(data.unpaid)) h += `<p class="small" style="margin-top:8px">Invoice hari ini yang belum lunas (piutang / sisa DP): <b>${num(data.unpaid)}</b> — tidak masuk kas.</p>`;
+  if (!done) h += `<div id="ecBox" style="margin-top:14px;border-top:1px solid var(--border);padding-top:12px"></div>`;
   if (!done) h += `<div class="row" style="margin-top:14px;gap:8px;flex-wrap:wrap;align-items:end;border-top:1px solid var(--border);padding-top:12px">
       <b class="small" style="width:100%">Setor tunai ke bank / tarik tunai</b>
       <select id="trKind" style="width:170px"><option value="setor_bank">Setor tunai ke bank</option><option value="tarik_tunai">Tarik tunai dari bank</option></select>
@@ -1157,9 +1164,46 @@ async function loadClose() {
     <div class="field" style="margin-top:12px"><label>Catatan / penjelasan selisih</label><input id="clNote"></div>`;
   $("clBody").innerHTML = h;
   $("clFoot").innerHTML = done
-    ? (ME.role === "owner" ? `<button class="danger" onclick="reopenClose(${done.id})">Buka lagi (owner)</button>` : "") + `<button onclick="closeModal('closeModal')">Tutup</button>`
+    ? (ME.role === "owner" || (ME.role === "admin" && data.day >= addDays(todayJkt(), -1)) ? `<button class="danger" onclick="reopenClose(${done.id})">Buka lagi</button>` : "") + `<button onclick="closeModal('closeModal')">Tutup</button>`
     : `<span class="small muted" style="margin-right:auto">Setelah ditutup, pengeluaran & setoran tanggal ini terkunci.</span><button onclick="closeModal('closeModal')">Batal</button><button class="go" onclick="saveClose()">Simpan tutup kasir</button>`;
   clCalc();
+  if (!done) loadEdc();
+}
+async function loadEdc() {
+  const day = $("clDay").value;
+  const [p, x] = await Promise.all([sb.rpc("edc_pending", { p_loc: ME.location_id }),
+    sb.from("edc_settlements").select("*, bank_accounts(name)").eq("location_id", ME.location_id).eq("day", day).is("cancelled_at", null).order("id")]);
+  if (p.error || x.error) { $("ecBox").innerHTML = `<p class="err">${esc((p.error || x.error).message)}</p>`; return; }
+  if (!p.data.length && !x.data.length) { $("ecBox").innerHTML = `<b class="small">Pencairan EDC/QRIS</b> <span class="small muted">— tidak ada yang belum cair.</span>`; return; }
+  $("ecBox").innerHTML = `<b class="small">Pencairan EDC/QRIS</b> <span class="tiny muted">— isi uang yang benar-benar masuk di mutasi bank. Potongan bank tercatat otomatis sebagai beban.</span>
+    <table style="margin-top:6px"><thead><tr><th>Tgl jual</th><th>Bank</th><th class="num">Belum cair</th><th class="num">Dicairkan</th><th class="num">Masuk di mutasi</th><th class="num">Potongan</th><th>Catatan</th><th></th></tr></thead><tbody>
+    ${p.data.map((r, i) => `<tr><td>${r.sales_day}${(new Date(day) - new Date(r.sales_day)) / 864e5 > 2 ? ' <span class="badge b-void">telat</span>' : ""}</td><td>${esc(r.bank)} <span class="tiny muted">${r.n} trx</span></td>
+      <td class="num">${num(r.pending)}</td>
+      <td class="num"><input class="num" id="ecG${i}" style="width:110px" value="${num(r.pending)}" oninput="this.value=this.value?num(parseRp(this.value)):'';ecFee(${i})"></td>
+      <td class="num"><input class="num" id="ecN${i}" style="width:110px" placeholder="dari mutasi" oninput="this.value=this.value?num(parseRp(this.value)):'';ecFee(${i})"></td>
+      <td class="num" id="ecF${i}"></td><td><input id="ecNote${i}" style="width:120px"></td>
+      <td><button onclick="settleEdc(${i})">Catat cair</button></td></tr>`).join("")}
+    ${x.data.map(e => `<tr class="muted"><td colspan="2">${esc(e.doc_no)} · ${esc(e.bank_accounts?.name || "")} · tgl jual ${e.sales_day}</td><td></td><td class="num">${num(e.gross)}</td><td class="num">${num(e.net)}</td>
+      <td class="num">${num(e.fee)}</td><td class="small">${esc(e.note || "")}</td><td><button class="link danger small" onclick="cancelEdc(${e.id})">batal</button></td></tr>`).join("")}
+    </tbody></table>`;
+  window.__ec = p.data;
+}
+function ecFee(i) {
+  const g = parseRp($("ecG" + i).value || ""), n = $("ecN" + i).value ? parseRp($("ecN" + i).value) : null;
+  $("ecF" + i).innerHTML = n == null ? "" : `<b style="color:${g - n > g * 0.01 || n > g ? "var(--red)" : "inherit"}">${num(g - n)}</b> <span class="tiny muted">${g ? ((g - n) / g * 100).toFixed(2) : 0}%</span>`;
+}
+async function settleEdc(i) {
+  const r = window.__ec[i];
+  const { data, error } = await sb.rpc("edc_settle", { p_bank: r.bank_account_id, p_sales_day: r.sales_day, p_gross: parseRp($("ecG" + i).value || "") || null,
+    p_net: $("ecN" + i).value ? parseRp($("ecN" + i).value) : null, p_day: $("clDay").value, p_note: $("ecNote" + i).value.trim() || null });
+  if (error) { toast(esc(error.message), "err", 6000); return; }
+  toast(`${data.doc_no} tercatat${Number(data.fee) ? ` · potongan ${num(data.fee)} masuk beban` : ""}.`); loadClose();
+}
+async function cancelEdc(id) {
+  const why = prompt("Batalkan pencairan ini? Alasan:"); if (!why || !why.trim()) return;
+  const { error } = await sb.rpc("cancel_edc_settlement", { p_id: id, p_reason: why.trim() });
+  if (error) { toast(esc(error.message), "err"); return; }
+  toast("Dibatalkan."); loadClose();
 }
 function clCalc() {
   if (!CL || CL.closing) return;

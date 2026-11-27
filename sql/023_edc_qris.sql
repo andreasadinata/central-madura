@@ -1,0 +1,7 @@
+-- v20_edc_qris_settlement (2026-11-27)
+-- payments/customer_deposits method + 'edc','qris' (bank = whose machine; bank_accounts.has_edc / has_qris).
+-- Cash book: card/QRIS goes to 'p<bank>' = "EDC/QRIS belum cair" (shown in tutup kasir, never counted) until edc_settle()
+-- moves the gross into the bank; fee (gross − net) auto-booked as expense "Biaya EDC / QRIS (MDR)"; fee > 1% needs a note.
+-- edc_settlements, _edc_pending / edc_pending, edc_settle, cancel_edc_settlement (fee expense can only be cancelled through it).
+-- reopen_cash_day: admin may reopen own branch's closing of today/yesterday; older = owner.
+-- Tinjauan: EDC/QRIS belum cair > 2 hari, potongan > 1%.
